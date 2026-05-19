@@ -178,3 +178,14 @@ def test_index_pdf_script_is_importable():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     assert hasattr(mod, "main")
+
+
+# ---------- search aliases ----------
+
+def test_install_guides_alias_resolves():
+    from nokia_docs.search import _resolve_product
+    assert _resolve_product("install") == "install-guides"
+    assert _resolve_product("chassis") == "install-guides"
+    assert _resolve_product("install guide") == "install-guides"
+    assert _resolve_product("installation") == "install-guides"
+    assert _resolve_product("install-guides") == "install-guides"

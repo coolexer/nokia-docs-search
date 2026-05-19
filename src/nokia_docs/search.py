@@ -110,6 +110,14 @@ _ALIASES: dict[str, str] = {
     "rn-mag-c":         "rn-mag-c",
     "mag-c":            "rn-mag-c",
     "magc":             "rn-mag-c",
+    # Installation Guides
+    "install":          "install-guides",
+    "install guide":    "install-guides",
+    "install guides":   "install-guides",
+    "installation":     "install-guides",
+    "chassis":          "install-guides",
+    "chassis guide":    "install-guides",
+    "install-guides":   "install-guides",
 }
 
 
@@ -342,6 +350,8 @@ _DISPLAY_NAMES: dict[str, str] = {
     "rn-sas":        "Nokia 7210 SAS Release Notes",
     "rn-eda":        "Nokia EDA Release Notes",
     "rn-mag-c":      "Nokia MAG-c Release Notes",
+    # Installation Guides
+    "install-guides": "Nokia Chassis Installation Guides",
 }
 
 
