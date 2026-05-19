@@ -109,10 +109,13 @@ def deduplicate_pdfs(pdf_dir: Path) -> list[Path]:
     pdf_dir = Path(pdf_dir)
     pdfs = list(pdf_dir.glob("*.pdf"))
 
-    # Group by document base (doc number is the part before _V1_)
-    groups = {}
+    # Group by document base.  Split on _V<n>_ (not just _V1_) so that V2/V3
+    # filenames are treated consistently with _issue_num() which also uses _V\d+_.
+    _vn_re = re.compile(r"_V\d+_")
+    groups: dict[str, list[Path]] = {}
     for pdf in pdfs:
-        doc_num = pdf.name.split("_V1_")[0] if "_V1_" in pdf.name else pdf.stem
+        m = _vn_re.search(pdf.name)
+        doc_num = pdf.name[:m.start()] if m else pdf.stem
         base = _doc_base(doc_num)
         if base not in groups:
             groups[base] = []
@@ -130,9 +133,11 @@ def deduplicate_pdfs(pdf_dir: Path) -> list[Path]:
 # PDF section extractor                                                        #
 # --------------------------------------------------------------------------- #
 
-_HEADING_SIZE_MIN = 13.5   # bold text above this size = heading
-_NOISE_SIZE_MAX   = 10.5   # text at or below this size = running header / footer
-_BODY_MAX_CHARS   = 3000   # split longer sections at paragraph boundary
+_HEADING_SIZE_MIN = 13.5   # bold text above this size = heading (tuned on Nokia 23.10.R1 SAR-Ax PDF)
+_NOISE_SIZE_MAX   = 10.5   # text at or below this size = running header / footer noise
+_BODY_MAX_CHARS   = 3000   # body-only cap; full_body (heading + body) may exceed this by heading length
+_BOLD_FLAG        = 1 << 4  # PyMuPDF span flags bit for bold
+_SKIP_FRONT_PAGES = 5       # cover + legal notice + table of contents (varies 4-7 per guide)
 
 
 def _block_text(block: dict) -> str:
@@ -159,11 +164,15 @@ def _is_heading_block(block: dict) -> bool:
     spans = [s for line in block["lines"] for s in line["spans"] if s["text"].strip()]
     if not spans:
         return False
-    return all((s["flags"] & 16) and s["size"] >= _HEADING_SIZE_MIN for s in spans)
+    return all((s["flags"] & _BOLD_FLAG) and s["size"] >= _HEADING_SIZE_MIN for s in spans)
 
 
 def _split_body(text: str, max_chars: int = _BODY_MAX_CHARS) -> list[str]:
-    """Split body text at paragraph boundaries if it exceeds max_chars."""
+    """Split body text at paragraph boundaries if it exceeds max_chars.
+
+    A single paragraph that is itself larger than max_chars is hard-sliced
+    at max_chars to guarantee no chunk body exceeds the cap.
+    """
     if len(text) <= max_chars:
         return [text]
     paras = text.split("\n")
@@ -171,10 +180,15 @@ def _split_body(text: str, max_chars: int = _BODY_MAX_CHARS) -> list[str]:
     current: list[str] = []
     current_len = 0
     for para in paras:
+        # Flush current accumulator if adding this paragraph would exceed cap.
         if current_len + len(para) > max_chars and current:
             parts.append("\n".join(current))
-            current = [para]
-            current_len = len(para)
+            current = []
+            current_len = 0
+        # Hard-slice oversized single paragraphs that exceed the cap on their own.
+        if len(para) > max_chars:
+            for start in range(0, len(para), max_chars):
+                parts.append(para[start:start + max_chars])
         else:
             current.append(para)
             current_len += len(para)
@@ -204,11 +218,12 @@ def parse_pdf(pdf_path: Path) -> list[dict]:
     doc = fitz.open(str(pdf_path))
     try:
         # ---- Pass 1: collect (kind, text) items from all content pages ----------
-        # Skip the first 5 pages: cover, legal notice, table of contents.
+        # Skip front matter (cover, legal notice, TOC). _SKIP_FRONT_PAGES is tuned
+        # for Nokia install guides and may need adjustment for unusually short guides.
         items: list[tuple[str, str]] = []   # ('heading' | 'body', text)
 
         for page_num, page in enumerate(doc):
-            if page_num < 5:
+            if page_num < _SKIP_FRONT_PAGES:
                 continue
             for block in page.get_text("dict")["blocks"]:
                 if block["type"] != 0:         # not a text block (image, etc.)

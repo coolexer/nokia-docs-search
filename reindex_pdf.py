@@ -25,23 +25,26 @@ conn = sqlite3.connect(DB, check_same_thread=False)
 conn.execute("PRAGMA journal_mode=WAL")
 conn.execute("PRAGMA synchronous=NORMAL")
 
-# Delete all install-guides rows
-ids = [r[0] for r in conn.execute(
-    "SELECT id FROM docs WHERE product_line='install-guides'"
-).fetchall()]
+# Delete all install-guides rows in a single transaction.
+# The per-row FTS delete loop used earlier was both slow (one implicit transaction
+# per DELETE) and left the DB in a partial state if interrupted.
+try:
+    ids = [r[0] for r in conn.execute(
+        "SELECT id FROM docs WHERE product_line='install-guides'"
+    ).fetchall()]
 
-if ids:
-    for doc_id in ids:
-        conn.execute("DELETE FROM docs_fts WHERE rowid=?", (doc_id,))
-    placeholders = ",".join("?" * len(ids))
-    conn.execute(f"DELETE FROM docs_body WHERE id IN ({placeholders})", ids)
-    conn.execute("DELETE FROM docs WHERE product_line='install-guides'")
-    print(f"Deleted {len(ids)} install-guides rows")
-else:
-    print("No install-guides rows to delete")
-
-conn.commit()
-conn.close()
+    if ids:
+        conn.execute("BEGIN")
+        placeholders = ",".join("?" * len(ids))
+        conn.execute(f"DELETE FROM docs_fts WHERE rowid IN ({placeholders})", ids)
+        conn.execute(f"DELETE FROM docs_body WHERE id IN ({placeholders})", ids)
+        conn.execute("DELETE FROM docs WHERE product_line='install-guides'")
+        conn.commit()
+        print(f"Deleted {len(ids)} install-guides rows")
+    else:
+        print("No install-guides rows to delete")
+finally:
+    conn.close()
 print(f"After delete: {DB.stat().st_size / 1024 / 1024:.1f} MB")
 print()
 

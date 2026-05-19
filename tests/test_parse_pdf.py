@@ -10,6 +10,7 @@ from nokia_docs.parse_pdf import (
     _issue_num,
     _chassis_from_filename,
     _slug,
+    _split_body,
     deduplicate_pdfs,
 )
 
@@ -68,6 +69,41 @@ def test_chassis_no_v1_marker():
     chassis, release = _chassis_from_filename(Path("unknown_doc.pdf"))
     assert chassis == "unknown_doc"
     assert release == ""
+
+
+# ---------- _split_body ----------
+
+def test_split_body_under_cap_returns_as_is():
+    text = "a" * 100
+    assert _split_body(text, max_chars=200) == [text]
+
+def test_split_body_at_cap_returns_as_is():
+    text = "a" * 200
+    assert _split_body(text, max_chars=200) == [text]
+
+def test_split_body_paragraph_boundary():
+    """Splits at paragraph boundary, not mid-paragraph."""
+    text = "first\nsecond\nthird"   # 18 chars; split at 10 should flush after "first"
+    parts = _split_body(text, max_chars=10)
+    assert len(parts) == 3
+    assert parts[0] == "first"
+    assert parts[1] == "second"
+    assert parts[2] == "third"
+
+def test_split_body_oversized_single_paragraph_is_hard_sliced():
+    """A single paragraph larger than cap must be sliced — not returned whole."""
+    big = "x" * 500
+    parts = _split_body(big, max_chars=200)
+    assert all(len(p) <= 200 for p in parts), "Hard-slice failed: chunk exceeds cap"
+    assert "".join(parts) == big, "Hard-slice must be lossless"
+
+def test_split_body_all_chunks_within_cap():
+    """No chunk may exceed max_chars regardless of paragraph structure."""
+    # Mix: some normal paragraphs, one oversized
+    text = "normal paragraph\n" * 10 + "x" * 600 + "\nnormal again"
+    parts = _split_body(text, max_chars=200)
+    for part in parts:
+        assert len(part) <= 200, f"Chunk exceeds cap: {len(part)} chars"
 
 
 # ---------- deduplicate_pdfs ----------
