@@ -1,7 +1,14 @@
-"""Parse PDF filenames to extract document metadata."""
+"""Parse Nokia chassis installation guide PDFs into FTS5-indexable chunks.
+
+Public API:
+    deduplicate_pdfs(pdf_dir)   → list[Path]   — latest issue per doc number
+    parse_pdf(pdf_path)         → list[dict]   — section chunks for DB insertion
+"""
+from __future__ import annotations
+
 import re
+from collections import defaultdict
 from pathlib import Path
-from typing import Tuple
 
 
 def _slug(text: str) -> str:
@@ -40,7 +47,7 @@ def _issue_num(pdf_path: Path) -> int:
     return 0
 
 
-def _chassis_from_filename(pdf_path: Path) -> Tuple[str, str]:
+def _chassis_from_filename(pdf_path: Path) -> tuple[str, str]:
     """Extract chassis model and release version from PDF filename.
 
     Args:
@@ -81,7 +88,7 @@ def _chassis_from_filename(pdf_path: Path) -> Tuple[str, str]:
     return (pdf_path.stem, "")
 
 
-def deduplicate_pdfs(pdf_dir: Path) -> list:
+def deduplicate_pdfs(pdf_dir: Path) -> list[Path]:
     """Keep only the highest issue version of each document.
 
     Groups PDFs by document base number (_doc_base) and returns
