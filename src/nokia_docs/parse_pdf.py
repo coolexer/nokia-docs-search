@@ -124,9 +124,6 @@ def deduplicate_pdfs(pdf_dir: Path) -> list[Path]:
 # PDF section extractor                                                        #
 # --------------------------------------------------------------------------- #
 
-import fitz  # PyMuPDF — imported here so filename utilities work without it
-
-
 _HEADING_SIZE_MIN = 13.5   # bold text above this size = heading
 _NOISE_SIZE_MAX   = 10.5   # text at or below this size = running header / footer
 _BODY_MAX_CHARS   = 3000   # split longer sections at paragraph boundary
@@ -187,7 +184,8 @@ def parse_pdf(pdf_path: Path) -> list[dict]:
     Each dict has keys: product_line, book, rel_path, page_title, section_id,
     section_title, section_path, depth, char_len, body.
     """
-    doc = fitz.open(str(pdf_path))
+    import fitz  # deferred so filename utilities work without PyMuPDF installed
+
     chassis, release = _chassis_from_filename(pdf_path)
     chassis_slug = _slug(chassis)
     page_title = chassis
@@ -197,86 +195,91 @@ def parse_pdf(pdf_path: Path) -> list[dict]:
         page_title += f" {release}"
     rel_path = f"install/{chassis_slug}.pdf"
 
-    # ---- Pass 1: collect (kind, text) items from all content pages ----------
-    # Skip the first 5 pages: cover, legal notice, table of contents.
-    items: list[tuple[str, str]] = []   # ('heading' | 'body', text)
+    doc = fitz.open(str(pdf_path))
+    try:
+        # ---- Pass 1: collect (kind, text) items from all content pages ----------
+        # Skip the first 5 pages: cover, legal notice, table of contents.
+        items: list[tuple[str, str]] = []   # ('heading' | 'body', text)
 
-    for page_num, page in enumerate(doc):
-        if page_num < 5:
-            continue
-        for block in page.get_text("dict")["blocks"]:
-            if block["type"] != 0:         # not a text block (image, etc.)
+        for page_num, page in enumerate(doc):
+            if page_num < 5:
                 continue
-            if _is_noise_block(block):
-                continue
-            text = _block_text(block)
-            if not text:
-                continue
-            if _is_heading_block(block):
-                items.append(("heading", text))
+            for block in page.get_text("dict")["blocks"]:
+                if block["type"] != 0:         # not a text block (image, etc.)
+                    continue
+                if _is_noise_block(block):
+                    continue
+                text = _block_text(block)
+                if not text:
+                    continue
+                if _is_heading_block(block):
+                    items.append(("heading", text))
+                else:
+                    items.append(("body", text))
+
+        # ---- Pass 2: merge consecutive heading blocks (section number + title) --
+        # Nokia PDFs emit the section number and section title as separate blocks:
+        #   heading "2.9.1.3"  +  heading "Protective Earth"  ->  "2.9.1.3 Protective Earth"
+        # THREE or more consecutive heading blocks (chapter + section + title) are
+        # all merged into a single heading string.
+        merged: list[tuple[str, str]] = []
+        i = 0
+        while i < len(items):
+            kind, text = items[i]
+            if kind == "heading":
+                heading_parts = [text]
+                while i + 1 < len(items) and items[i + 1][0] == "heading":
+                    i += 1
+                    heading_parts.append(items[i][1])
+                merged.append(("heading", " ".join(heading_parts)))
             else:
-                items.append(("body", text))
-
-    # ---- Pass 2: merge consecutive heading blocks (section number + title) --
-    # Nokia PDFs emit the section number and section title as separate blocks:
-    #   heading "2.9.1.3"  +  heading "Protective Earth"  ->  "2.9.1.3 Protective Earth"
-    merged: list[tuple[str, str]] = []
-    i = 0
-    while i < len(items):
-        kind, text = items[i]
-        if (
-            kind == "heading"
-            and i + 1 < len(items)
-            and items[i + 1][0] == "heading"
-        ):
-            merged.append(("heading", f"{text} {items[i + 1][1]}"))
-            i += 2
-        else:
-            merged.append((kind, text))
+                merged.append((kind, text))
             i += 1
 
-    # ---- Pass 3: group into (heading, body_text) sections -------------------
-    sections: list[dict] = []
-    current_heading = ""
-    current_body: list[str] = []
+        # ---- Pass 3: group into (heading, body_text) sections -------------------
+        sections: list[dict] = []
+        current_heading = ""
+        current_body: list[str] = []
 
-    for kind, text in merged:
-        if kind == "heading":
-            if current_heading and current_body:
-                sections.append({
-                    "heading": current_heading,
-                    "body": "\n".join(current_body),
+        for kind, text in merged:
+            if kind == "heading":
+                if current_heading and current_body:
+                    sections.append({
+                        "heading": current_heading,
+                        "body": "\n".join(current_body),
+                    })
+                current_heading = text
+                current_body = []
+            else:
+                current_body.append(text)
+
+        if current_heading and current_body:
+            sections.append({"heading": current_heading, "body": "\n".join(current_body)})
+
+        # ---- Pass 4: convert to DB records, splitting oversized sections --------
+        records: list[dict] = []
+        for sec_idx, sec in enumerate(sections):
+            body_chunks = _split_body(sec["body"])
+            for chunk_idx, chunk_text in enumerate(body_chunks):
+                full_body = f"{sec['heading']}\n\n{chunk_text}"
+                section_id = (
+                    f"sec-{sec_idx}-{chunk_idx}" if len(body_chunks) > 1
+                    else f"sec-{sec_idx}"
+                )
+                records.append({
+                    "product_line": "install-guides",
+                    "book":         chassis_slug,
+                    "rel_path":     rel_path,
+                    "page_title":   page_title,
+                    "section_id":   section_id,
+                    "section_title": sec["heading"],
+                    "section_path": f"{chassis} > {sec['heading']}",
+                    "depth":        0,
+                    "char_len":     len(full_body),
+                    "body":         full_body,
                 })
-            current_heading = text
-            current_body = []
-        else:
-            current_body.append(text)
 
-    if current_heading and current_body:
-        sections.append({"heading": current_heading, "body": "\n".join(current_body)})
+        return records
 
-    # ---- Pass 4: convert to DB records, splitting oversized sections --------
-    records: list[dict] = []
-    for sec_idx, sec in enumerate(sections):
-        body_chunks = _split_body(sec["body"])
-        for chunk_idx, chunk_text in enumerate(body_chunks):
-            full_body = f"{sec['heading']}\n\n{chunk_text}"
-            section_id = (
-                f"sec-{sec_idx}-{chunk_idx}" if len(body_chunks) > 1
-                else f"sec-{sec_idx}"
-            )
-            records.append({
-                "product_line": "install-guides",
-                "book":         chassis_slug,
-                "rel_path":     rel_path,
-                "page_title":   page_title,
-                "section_id":   section_id,
-                "section_title": sec["heading"],
-                "section_path": f"{chassis} > {sec['heading']}",
-                "depth":        0,
-                "char_len":     len(full_body),
-                "body":         full_body,
-            })
-
-    doc.close()
-    return records
+    finally:
+        doc.close()
