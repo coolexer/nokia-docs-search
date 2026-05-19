@@ -15,6 +15,7 @@ without leaving the conversation.
 - [MCP tools](#mcp-tools)
 - [Search examples — documentation](#search-examples--documentation)
 - [Search examples — release notes](#search-examples--release-notes)
+- [Search examples — installation guides](#search-examples--installation-guides)
 - [Product line slugs and aliases](#product-line-slugs-and-aliases)
 - [Building the index](#building-the-index)
 - [Re-indexing release notes](#re-indexing-release-notes)
@@ -38,6 +39,7 @@ without leaving the conversation.
 | `rn-sas` | Nokia 7210 SAS release notes | ~1 400 |
 | `rn-eda` | Nokia EDA release notes | ~920 |
 | `rn-mag-c` | Nokia MAG-c release notes | ~270 |
+| `install-guides` | Nokia Chassis Installation Guides (all platforms) | ~8 700 |
 
 ---
 
@@ -215,6 +217,81 @@ A typical workflow — find a bug in RN, then read the config guide:
 
 ---
 
+## Search examples — installation guides
+
+Chassis installation guides cover physical installation, power, grounding, cabling,
+and hardware specifications for every Nokia platform. Each PDF is de-duplicated to
+the latest revision and split into searchable sections.
+
+### Power and grounding
+
+```
+# AC/DC power requirements for 7705 SAR-Ax
+search_docs("power supply requirements AC DC", product_line="install", book="7705-sar-ax")
+
+# Protective earth grounding procedures
+search_docs("protective earth grounding", product_line="chassis")
+
+# Power consumption and heat dissipation across all platforms
+search_docs("power consumption watts heat dissipation", product_line="install-guides")
+```
+
+### Rack mounting and physical installation
+
+```
+# Rack mounting instructions for 7750 SR-1s
+search_docs("rack mount installation", product_line="install", book="7750-sr-1s")
+
+# Cable management and routing
+search_docs("cable management routing fiber", product_line="chassis")
+
+# Airflow and cooling requirements
+search_docs("airflow cooling direction", product_line="install-guides")
+```
+
+### Safety and compliance
+
+```
+# Laser safety classification
+search_docs("laser safety class", product_line="install-guides")
+
+# ESD protection procedures
+search_docs("ESD electrostatic discharge protection", product_line="chassis")
+
+# Environmental operating conditions (temperature, humidity)
+search_docs("operating temperature humidity environmental", product_line="install-guides")
+```
+
+### Cross-platform hardware comparison
+
+```
+# Find all platforms with -48V DC input support
+search_docs("-48V DC input", product_line="install-guides")
+
+# SFP/QSFP port specifications across all chassis
+search_docs("QSFP28 optical transceiver", product_line="install-guides")
+
+# Chassis dimensions and weight for all models
+search_docs("dimensions weight kg mm", product_line="install-guides")
+```
+
+### Available books (one per chassis model)
+
+Use `list_products()` to see current book names. Typical entries:
+
+```
+list_products()
+→ install-guides: 7705-sar-ax, 7750-sr-1s, sr-linux-7220-ixr-d, ...
+```
+
+Then scope a search to a single chassis:
+
+```
+search_docs("fan replacement procedure", product_line="install-guides", book="7750-sr-1s")
+```
+
+---
+
 ## Product line slugs and aliases
 
 The `product_line` parameter accepts both slugs and human-friendly aliases:
@@ -233,6 +310,7 @@ The `product_line` parameter accepts both slugs and human-friendly aliases:
 | `rn-sas`, `rn sas` | `rn-sas` |
 | `rn-eda`, `rn eda`, `eda` | `rn-eda` |
 | `rn-mag-c`, `rn mag-c`, `mag-c` | `rn-mag-c` |
+| `install`, `chassis`, `installation`, `install-guides` | `install-guides` |
 
 ---
 
