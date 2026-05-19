@@ -104,3 +104,63 @@ def test_deduplicate_single_file(tmp_path):
     (tmp_path / "3HE10360AAAATQZZA_V1_7210 SAS-Mxp.pdf").touch()
     result = deduplicate_pdfs(tmp_path)
     assert len(result) == 1
+
+
+# ---------- parse_pdf integration ----------
+
+SAMPLE_PDF = Path(r"C:\!Docs\OneDrive - Nokia\Docs\chassis installation guide\3HE19506AAABTQZZA01_V1_7705 SAR-Ax Chassis Installation Guide 23.10.R1.pdf")
+
+
+@pytest.mark.skipif(
+    not SAMPLE_PDF.exists(),
+    reason="Nokia PDF not available in test environment",
+)
+def test_parse_pdf_returns_chunks():
+    from nokia_docs.parse_pdf import parse_pdf
+    chunks = parse_pdf(SAMPLE_PDF)
+    assert len(chunks) > 20, "Expected many sections in a 144-page guide"
+
+
+@pytest.mark.skipif(
+    not SAMPLE_PDF.exists(),
+    reason="Nokia PDF not available in test environment",
+)
+def test_parse_pdf_chunk_structure():
+    from nokia_docs.parse_pdf import parse_pdf
+    chunks = parse_pdf(SAMPLE_PDF)
+    required_keys = {
+        "product_line", "book", "rel_path", "page_title",
+        "section_id", "section_title", "section_path", "depth", "char_len", "body",
+    }
+    for chunk in chunks:
+        assert required_keys == set(chunk.keys()), f"Missing keys: {required_keys - set(chunk.keys())}"
+        assert chunk["product_line"] == "install-guides"
+        assert chunk["book"]
+        assert chunk["section_title"]
+        assert chunk["body"]
+
+
+@pytest.mark.skipif(
+    not SAMPLE_PDF.exists(),
+    reason="Nokia PDF not available in test environment",
+)
+def test_parse_pdf_no_noise():
+    """Running headers / footers should not appear in body."""
+    from nokia_docs.parse_pdf import parse_pdf
+    chunks = parse_pdf(SAMPLE_PDF)
+    for chunk in chunks:
+        assert "Nokia Confidential" not in chunk["body"]
+
+
+@pytest.mark.skipif(
+    not SAMPLE_PDF.exists(),
+    reason="Nokia PDF not available in test environment",
+)
+def test_parse_pdf_no_oversized_chunks():
+    """No chunk body should exceed 4000 chars."""
+    from nokia_docs.parse_pdf import parse_pdf
+    chunks = parse_pdf(SAMPLE_PDF)
+    for chunk in chunks:
+        assert chunk["char_len"] <= 4000, (
+            f"Oversized chunk '{chunk['section_title']}': {chunk['char_len']} chars"
+        )

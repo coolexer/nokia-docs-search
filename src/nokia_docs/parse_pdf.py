@@ -118,3 +118,165 @@ def deduplicate_pdfs(pdf_dir: Path) -> list[Path]:
         result.append(max(group, key=_issue_num))
 
     return result
+
+
+# --------------------------------------------------------------------------- #
+# PDF section extractor                                                        #
+# --------------------------------------------------------------------------- #
+
+import fitz  # PyMuPDF — imported here so filename utilities work without it
+
+
+_HEADING_SIZE_MIN = 13.5   # bold text above this size = heading
+_NOISE_SIZE_MAX   = 10.5   # text at or below this size = running header / footer
+_BODY_MAX_CHARS   = 3000   # split longer sections at paragraph boundary
+
+
+def _block_text(block: dict) -> str:
+    """Concatenate all span text in a block, collapsing whitespace."""
+    parts = [
+        s["text"].strip()
+        for line in block["lines"]
+        for s in line["spans"]
+        if s["text"].strip()
+    ]
+    return " ".join(parts)
+
+
+def _is_noise_block(block: dict) -> bool:
+    """True if the block is a running page header or footer (all text <= noise threshold)."""
+    spans = [s for line in block["lines"] for s in line["spans"] if s["text"].strip()]
+    if not spans:
+        return True
+    return all(s["size"] <= _NOISE_SIZE_MAX for s in spans)
+
+
+def _is_heading_block(block: dict) -> bool:
+    """True if ALL non-empty spans are bold and above the heading size threshold."""
+    spans = [s for line in block["lines"] for s in line["spans"] if s["text"].strip()]
+    if not spans:
+        return False
+    return all((s["flags"] & 16) and s["size"] >= _HEADING_SIZE_MIN for s in spans)
+
+
+def _split_body(text: str, max_chars: int = _BODY_MAX_CHARS) -> list[str]:
+    """Split body text at paragraph boundaries if it exceeds max_chars."""
+    if len(text) <= max_chars:
+        return [text]
+    paras = text.split("\n")
+    parts: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for para in paras:
+        if current_len + len(para) > max_chars and current:
+            parts.append("\n".join(current))
+            current = [para]
+            current_len = len(para)
+        else:
+            current.append(para)
+            current_len += len(para)
+    if current:
+        parts.append("\n".join(current))
+    return parts or [text]
+
+
+def parse_pdf(pdf_path: Path) -> list[dict]:
+    """Extract section chunks from a Nokia chassis installation guide PDF.
+
+    Returns a list of dicts matching the nokia_docs.db schema (docs + docs_body).
+    Each dict has keys: product_line, book, rel_path, page_title, section_id,
+    section_title, section_path, depth, char_len, body.
+    """
+    doc = fitz.open(str(pdf_path))
+    chassis, release = _chassis_from_filename(pdf_path)
+    chassis_slug = _slug(chassis)
+    page_title = chassis
+    if "Chassis" not in chassis:
+        page_title += " Chassis Installation Guide"
+    if release:
+        page_title += f" {release}"
+    rel_path = f"install/{chassis_slug}.pdf"
+
+    # ---- Pass 1: collect (kind, text) items from all content pages ----------
+    # Skip the first 5 pages: cover, legal notice, table of contents.
+    items: list[tuple[str, str]] = []   # ('heading' | 'body', text)
+
+    for page_num, page in enumerate(doc):
+        if page_num < 5:
+            continue
+        for block in page.get_text("dict")["blocks"]:
+            if block["type"] != 0:         # not a text block (image, etc.)
+                continue
+            if _is_noise_block(block):
+                continue
+            text = _block_text(block)
+            if not text:
+                continue
+            if _is_heading_block(block):
+                items.append(("heading", text))
+            else:
+                items.append(("body", text))
+
+    # ---- Pass 2: merge consecutive heading blocks (section number + title) --
+    # Nokia PDFs emit the section number and section title as separate blocks:
+    #   heading "2.9.1.3"  +  heading "Protective Earth"  ->  "2.9.1.3 Protective Earth"
+    merged: list[tuple[str, str]] = []
+    i = 0
+    while i < len(items):
+        kind, text = items[i]
+        if (
+            kind == "heading"
+            and i + 1 < len(items)
+            and items[i + 1][0] == "heading"
+        ):
+            merged.append(("heading", f"{text} {items[i + 1][1]}"))
+            i += 2
+        else:
+            merged.append((kind, text))
+            i += 1
+
+    # ---- Pass 3: group into (heading, body_text) sections -------------------
+    sections: list[dict] = []
+    current_heading = ""
+    current_body: list[str] = []
+
+    for kind, text in merged:
+        if kind == "heading":
+            if current_heading and current_body:
+                sections.append({
+                    "heading": current_heading,
+                    "body": "\n".join(current_body),
+                })
+            current_heading = text
+            current_body = []
+        else:
+            current_body.append(text)
+
+    if current_heading and current_body:
+        sections.append({"heading": current_heading, "body": "\n".join(current_body)})
+
+    # ---- Pass 4: convert to DB records, splitting oversized sections --------
+    records: list[dict] = []
+    for sec_idx, sec in enumerate(sections):
+        body_chunks = _split_body(sec["body"])
+        for chunk_idx, chunk_text in enumerate(body_chunks):
+            full_body = f"{sec['heading']}\n\n{chunk_text}"
+            section_id = (
+                f"sec-{sec_idx}-{chunk_idx}" if len(body_chunks) > 1
+                else f"sec-{sec_idx}"
+            )
+            records.append({
+                "product_line": "install-guides",
+                "book":         chassis_slug,
+                "rel_path":     rel_path,
+                "page_title":   page_title,
+                "section_id":   section_id,
+                "section_title": sec["heading"],
+                "section_path": f"{chassis} > {sec['heading']}",
+                "depth":        0,
+                "char_len":     len(full_body),
+                "body":         full_body,
+            })
+
+    doc.close()
+    return records
