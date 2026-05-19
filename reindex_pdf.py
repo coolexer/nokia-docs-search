@@ -11,6 +11,14 @@ DB = Path(sys.argv[1] if len(sys.argv) > 1 else "nokia_docs.db")
 PDF_DIR = Path(sys.argv[2] if len(sys.argv) > 2 else
                r"C:\!Docs\OneDrive - Nokia\Docs\chassis installation guide")
 
+# Pre-condition checks before any destructive operation.
+if not DB.exists():
+    print(f"[!] DB not found: {DB}")
+    sys.exit(1)
+if not PDF_DIR.exists():
+    print(f"[!] PDF directory not found: {PDF_DIR}")
+    sys.exit(1)
+
 print(f"DB: {DB}  ({DB.stat().st_size / 1024 / 1024:.1f} MB)")
 
 conn = sqlite3.connect(DB, check_same_thread=False)
@@ -38,8 +46,7 @@ print(f"After delete: {DB.stat().st_size / 1024 / 1024:.1f} MB")
 print()
 
 # Re-index
-import sys as _sys
-_sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent / "src"))
 import index_pdf
 index_pdf.DB_PATH = DB
 index_pdf.PDF_DIR = PDF_DIR

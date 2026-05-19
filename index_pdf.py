@@ -49,7 +49,8 @@ def main() -> None:
 
     pdfs = deduplicate_pdfs(pdf_dir)
     print(f"PDFs    : {len(pdfs)} (after de-duplication)")
-    print(f"DB size before: {DB_PATH.stat().st_size / 1024 / 1024:.1f} MB")
+    if DB_PATH.exists():
+        print(f"DB size before: {DB_PATH.stat().st_size / 1024 / 1024:.1f} MB")
     print()
 
     conn = _open_db(DB_PATH)

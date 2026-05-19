@@ -187,5 +187,24 @@ def test_install_guides_alias_resolves():
     assert _resolve_product("install") == "install-guides"
     assert _resolve_product("chassis") == "install-guides"
     assert _resolve_product("install guide") == "install-guides"
+    assert _resolve_product("install guides") == "install-guides"
     assert _resolve_product("installation") == "install-guides"
+    assert _resolve_product("chassis guide") == "install-guides"
     assert _resolve_product("install-guides") == "install-guides"
+
+
+# ---------- deduplicate_pdfs — non-_V1_ fallback ----------
+
+def test_deduplicate_no_v1_marker_groups_by_doc_base(tmp_path):
+    """Files without _V1_ marker are grouped by doc base (trailing digits stripped).
+
+    Real Nokia PDFs always carry the _V1_ separator. This test covers the bare
+    doc-number-only fallback shape (e.g. an archived download named just by
+    document number, no description appended).
+    """
+    (tmp_path / "3HE10360AAAATQZZA.pdf").touch()
+    (tmp_path / "3HE10360AAAATQZZA02.pdf").touch()
+
+    result = deduplicate_pdfs(tmp_path)
+    assert len(result) == 1
+    assert result[0].name == "3HE10360AAAATQZZA02.pdf"

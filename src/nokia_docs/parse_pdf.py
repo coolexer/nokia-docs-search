@@ -37,13 +37,19 @@ def _issue_num(pdf_path: Path) -> int:
     Returns:
         Issue number as integer (0 if no trailing digits found).
     """
-    # Extract filename without extension
     stem = pdf_path.stem
 
-    # Find digits before _V1_ marker
-    match = re.search(r"(\d+)_V1_", stem)
+    # Primary: digits immediately before the _V1_ (or _V2_ etc.) separator.
+    match = re.search(r"(\d+)_V\d+_", stem)
     if match:
         return int(match.group(1))
+
+    # Fallback for bare doc-number filenames (no description after doc number):
+    # strip trailing digits from the stem itself.
+    tail = re.search(r"(\d+)$", stem)
+    if tail:
+        return int(tail.group(1))
+
     return 0
 
 
