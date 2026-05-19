@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: nokia-docs-search
+Version: 0.1.0
+Summary: Nokia documentation FTS5 search — MCP server for Claude Code
+Requires-Python: >=3.11
+Requires-Dist: fastmcp>=2.0
+Requires-Dist: selectolax>=0.3
+Requires-Dist: click>=8.1

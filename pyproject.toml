@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nokia-docs-search"
+version = "0.1.0"
+description = "Nokia documentation FTS5 search — MCP server for Claude Code"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.0",
+    "selectolax>=0.3",
+    "click>=8.1",
+]
+
+[project.scripts]
+nokia-docs = "nokia_docs.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+nokia_docs = ["schema.sql"]
