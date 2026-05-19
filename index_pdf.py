@@ -29,6 +29,8 @@ def _arg(flag: str, default: str) -> str:
     return default
 
 
+# These globals are set at import time from sys.argv, but can be overridden
+# by callers (e.g. reindex_pdf.py sets index_pdf.DB_PATH before calling main()).
 DB_PATH  = Path(_arg("--db",      "nokia_docs.db"))
 PDF_DIR  = Path(_arg("--pdf-dir", str(_DEFAULT_PDF_DIR)))
 
@@ -54,21 +56,23 @@ def main() -> None:
     total = 0
     t0 = time.monotonic()
 
-    for i, pdf_path in enumerate(pdfs, 1):
-        short = pdf_path.name[:60]
-        print(f"[{i:3d}/{len(pdfs)}] {short}...", end=" ", flush=True)
-        try:
-            records = parse_pdf(pdf_path)
-            inserted = _insert_batch(conn, records)
-            print(f"{len(records)} sections, {inserted} inserted")
-            total += inserted
-        except Exception as exc:
-            print(f"ERROR: {exc}")
+    try:
+        for i, pdf_path in enumerate(pdfs, 1):
+            short = pdf_path.name[:60]
+            print(f"[{i:3d}/{len(pdfs)}] {short}...", end=" ", flush=True)
+            try:
+                records = parse_pdf(pdf_path)
+                inserted = _insert_batch(conn, records)
+                print(f"{len(records)} sections, {inserted} inserted")
+                total += inserted
+            except Exception as exc:
+                print(f"ERROR: {exc}")
 
-    print(f"\nOptimizing FTS5 index...")
-    conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
-    conn.commit()
-    conn.close()
+        print(f"\nOptimizing FTS5 index...")
+        conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
+        conn.commit()
+    finally:
+        conn.close()
 
     elapsed = time.monotonic() - t0
     print(f"\nDone in {elapsed:.1f}s")
