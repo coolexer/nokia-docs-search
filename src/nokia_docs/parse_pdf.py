@@ -133,11 +133,54 @@ def deduplicate_pdfs(pdf_dir: Path) -> list[Path]:
 # PDF section extractor                                                        #
 # --------------------------------------------------------------------------- #
 
-_HEADING_SIZE_MIN = 13.5   # bold text above this size = heading (tuned on Nokia 23.10.R1 SAR-Ax PDF)
-_NOISE_SIZE_MAX   = 10.5   # text at or below this size = running header / footer noise
 _BODY_MAX_CHARS   = 3000   # body-only cap; full_body (heading + body) may exceed this by heading length
 _BOLD_FLAG        = 1 << 4  # PyMuPDF span flags bit for bold
 _SKIP_FRONT_PAGES = 5       # cover + legal notice + table of contents (varies 4-7 per guide)
+
+# Fallback thresholds used when auto-detection cannot determine body size.
+# Tuned on Nokia 23.10.R1 SAR-Ax PDF (body ~11pt, noise ≤10.5pt).
+_HEADING_SIZE_MIN_DEFAULT = 13.5
+_NOISE_SIZE_MAX_DEFAULT   = 10.5
+
+
+def _detect_thresholds(doc: "fitz.Document") -> tuple[float, float]:
+    """Auto-detect heading_min and noise_max from the PDF's font-size distribution.
+
+    Strategy:
+      1. Sample the first 20 content pages (after front matter).
+      2. The most common *non-bold* font size above 8 pt is body text.
+      3. noise_max  = body_size - 0.5   (half a point below body; filters running
+         headers/footers while preserving body text even at 10 pt).
+      4. heading_min = body_size + 2.0  (bold text clearly larger than body).
+
+    This makes the parser self-calibrating across Nokia guides with different
+    typographic conventions (e.g. SAR-Ax body ~11 pt vs IXR-D2L body ~10 pt).
+    """
+    from collections import Counter
+    size_counts: Counter[float] = Counter()
+    start = _SKIP_FRONT_PAGES
+    end   = min(start + 20, len(doc))
+    for page_num in range(start, end):
+        for block in doc[page_num].get_text("dict")["blocks"]:
+            if block["type"] != 0:
+                continue
+            for line in block["lines"]:
+                for s in line["spans"]:
+                    if not s["text"].strip():
+                        continue
+                    if s["flags"] & _BOLD_FLAG:
+                        continue   # bold spans are headings/noise, not body
+                    sz = round(s["size"], 1)
+                    if sz > 8.0:   # ignore tiny diagram labels / footnotes
+                        size_counts[sz] += 1
+
+    if not size_counts:
+        return _HEADING_SIZE_MIN_DEFAULT, _NOISE_SIZE_MAX_DEFAULT
+
+    body_size   = size_counts.most_common(1)[0][0]
+    noise_max   = round(body_size - 0.5, 1)
+    heading_min = round(body_size + 2.0, 1)
+    return heading_min, noise_max
 
 
 def _block_text(block: dict) -> str:
@@ -151,20 +194,20 @@ def _block_text(block: dict) -> str:
     return " ".join(parts)
 
 
-def _is_noise_block(block: dict) -> bool:
+def _is_noise_block(block: dict, noise_max: float) -> bool:
     """True if the block is a running page header or footer (all text <= noise threshold)."""
     spans = [s for line in block["lines"] for s in line["spans"] if s["text"].strip()]
     if not spans:
         return True
-    return all(s["size"] <= _NOISE_SIZE_MAX for s in spans)
+    return all(s["size"] <= noise_max for s in spans)
 
 
-def _is_heading_block(block: dict) -> bool:
+def _is_heading_block(block: dict, heading_min: float) -> bool:
     """True if ALL non-empty spans are bold and above the heading size threshold."""
     spans = [s for line in block["lines"] for s in line["spans"] if s["text"].strip()]
     if not spans:
         return False
-    return all((s["flags"] & _BOLD_FLAG) and s["size"] >= _HEADING_SIZE_MIN for s in spans)
+    return all((s["flags"] & _BOLD_FLAG) and s["size"] >= heading_min for s in spans)
 
 
 def _split_body(text: str, max_chars: int = _BODY_MAX_CHARS) -> list[str]:
@@ -213,10 +256,20 @@ def parse_pdf(pdf_path: Path) -> list[dict]:
         page_title += " Chassis Installation Guide"
     if release:
         page_title += f" {release}"
-    rel_path = f"install/{chassis_slug}.pdf"
+
+    # Include the doc-number prefix in rel_path to avoid collisions between
+    # different Nokia document numbers that cover the same chassis model
+    # (e.g. multiple release versions, or SR Linux vs SONiC variants).
+    m = re.search(r"_V\d+_", pdf_path.name)
+    doc_key = pdf_path.name[:m.start()].lower() if m else pdf_path.stem.lower()
+    rel_path = f"install/{chassis_slug}/{doc_key}.pdf"
 
     doc = fitz.open(str(pdf_path))
     try:
+        # Auto-detect font-size thresholds for this specific PDF.
+        # Nokia guides vary: SAR-Ax body ~11 pt, IXR-D2L body ~10 pt.
+        heading_min, noise_max = _detect_thresholds(doc)
+
         # ---- Pass 1: collect (kind, text) items from all content pages ----------
         # Skip front matter (cover, legal notice, TOC). _SKIP_FRONT_PAGES is tuned
         # for Nokia install guides and may need adjustment for unusually short guides.
@@ -228,12 +281,12 @@ def parse_pdf(pdf_path: Path) -> list[dict]:
             for block in page.get_text("dict")["blocks"]:
                 if block["type"] != 0:         # not a text block (image, etc.)
                     continue
-                if _is_noise_block(block):
+                if _is_noise_block(block, noise_max):
                     continue
                 text = _block_text(block)
                 if not text:
                     continue
-                if _is_heading_block(block):
+                if _is_heading_block(block, heading_min):
                     items.append(("heading", text))
                 else:
                     items.append(("body", text))

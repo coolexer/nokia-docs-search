@@ -154,7 +154,13 @@ SAMPLE_PDF = Path(r"C:\!Docs\OneDrive - Nokia\Docs\chassis installation guide\3H
 def test_parse_pdf_returns_chunks():
     from nokia_docs.parse_pdf import parse_pdf
     chunks = parse_pdf(SAMPLE_PDF)
-    assert len(chunks) > 20, "Expected many sections in a 144-page guide"
+    assert len(chunks) > 50, "Expected many sections in a 144-page guide"
+    # Degraded-parse guard: at least one chunk must have substantial body text.
+    max_body = max(c["char_len"] for c in chunks)
+    assert max_body > 1500, (
+        f"Parsing may be degraded: longest chunk only {max_body} chars. "
+        "Check font-size thresholds — body text may be misclassified as noise."
+    )
 
 
 @pytest.mark.skipif(
