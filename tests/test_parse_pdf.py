@@ -164,3 +164,17 @@ def test_parse_pdf_no_oversized_chunks():
         assert chunk["char_len"] <= 4000, (
             f"Oversized chunk '{chunk['section_title']}': {chunk['char_len']} chars"
         )
+
+
+# ---------- index_pdf smoke ----------
+
+def test_index_pdf_script_is_importable():
+    """index_pdf.py must be importable without side-effects."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "index_pdf",
+        Path(__file__).parent.parent / "index_pdf.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert hasattr(mod, "main")
