@@ -1,2 +1,0 @@
-[console_scripts]
-nokia-docs = nokia_docs.cli:main
