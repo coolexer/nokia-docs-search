@@ -11,8 +11,9 @@ and exposes three MCP tools:
 - `get_document` - retrieve full text for a section returned by search
 - `list_products` - list indexed product lines, section counts, and books
 
-The database is local. It is not committed to this repository because it can be
-large and may contain material that should remain inside the team environment.
+The database is distributed separately from the source code. It is not committed
+to this repository because it can be large and may contain material that should
+remain inside the team environment.
 
 ## What It Indexes
 
@@ -55,6 +56,27 @@ The package installs a CLI command:
 ```bash
 nokia-docs --help
 ```
+
+## Database Distribution
+
+This repository contains the MCP server, indexers, tests, and documentation.
+The generated SQLite database is an external runtime artifact.
+
+Recommended team flow:
+
+1. Build or refresh `nokia_docs.db` in a controlled internal environment.
+2. Publish the DB through an approved internal artifact channel, such as an
+   internal release, SharePoint folder, package registry, or file share.
+3. Place the DB on each user's machine and point the MCP server at it with
+   `NOKIA_DOCS_DB`.
+
+Do not commit generated database files to GitHub:
+
+- `*.db`
+- `*.db-wal`
+- `*.db-shm`
+- `*.sqlite`
+- `*.sqlite3`
 
 ## Build The Database
 
@@ -116,17 +138,29 @@ highest issue number before parsing.
 nokia-docs index-pdf --db nokia_docs.db --pdf-dir /path/to/chassis-installation-guides
 ```
 
+Use strict failure handling for release builds:
+
+```bash
+nokia-docs index-pdf --db nokia_docs.db --pdf-dir /path/to/chassis-installation-guides --fail-on-error
+```
+
 To replace existing installation-guide rows:
 
 ```bash
 nokia-docs reindex-pdf --db nokia_docs.db --pdf-dir /path/to/chassis-installation-guides
 ```
 
+For release builds, combine re-indexing with strict failure handling:
+
+```bash
+nokia-docs reindex-pdf --db nokia_docs.db --pdf-dir /path/to/chassis-installation-guides --fail-on-error
+```
+
 Compatibility wrappers:
 
 ```bash
 python index_pdf.py --db nokia_docs.db --pdf-dir /path/to/chassis-installation-guides
-python reindex_pdf.py nokia_docs.db /path/to/chassis-installation-guides
+python reindex_pdf.py nokia_docs.db /path/to/chassis-installation-guides --fail-on-error
 ```
 
 ## Run The MCP Server
@@ -315,7 +349,8 @@ python -m ruff check src tests index_rn.py index_pdf.py reindex_rn.py reindex_pd
 GitHub Actions runs linting, bytecode compilation, and the full test suite on
 push and pull requests.
 
-Some PDF integration tests are skipped unless the local sample PDF path exists.
+Some PDF integration tests are skipped unless `NOKIA_DOCS_SAMPLE_PDF` points to
+a local sample PDF.
 
 ## Troubleshooting
 
@@ -329,7 +364,8 @@ NOKIA_DOCS_DB=/absolute/path/to/nokia_docs.db nokia-docs serve
 
 ### `Database not found`
 
-Build the database first:
+Download the separately distributed database artifact, or build the database
+locally:
 
 ```bash
 nokia-docs index /path/to/nokia-docs-root -o nokia_docs.db --reset

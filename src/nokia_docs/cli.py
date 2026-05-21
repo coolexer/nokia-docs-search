@@ -2,7 +2,7 @@
 import click
 
 from nokia_docs.index import index_cmd
-from nokia_docs.pdf_index import DEFAULT_PDF_DIR, index_pdfs, reindex_pdfs
+from nokia_docs.pdf_index import index_pdfs, reindex_pdfs
 from nokia_docs.rn import index_release_notes, reindex_release_notes
 
 
@@ -45,26 +45,30 @@ def reindex_rn_cmd(db_path: str, rn_dir: str):
 @click.option("--db", "db_path", default="nokia_docs.db", show_default=True,
               type=click.Path(dir_okay=False),
               help="SQLite database path.")
-@click.option("--pdf-dir", default=str(DEFAULT_PDF_DIR), show_default=True,
+@click.option("--pdf-dir", required=True,
               type=click.Path(file_okay=False),
               help="Directory containing Nokia chassis installation guide PDFs.")
-def index_pdf_cmd(db_path: str, pdf_dir: str):
+@click.option("--fail-on-error", is_flag=True,
+              help="Exit with an error if any PDF fails to parse.")
+def index_pdf_cmd(db_path: str, pdf_dir: str, fail_on_error: bool):
     """Index Nokia chassis installation guide PDFs."""
     from pathlib import Path
-    index_pdfs(Path(db_path), Path(pdf_dir))
+    index_pdfs(Path(db_path), Path(pdf_dir), fail_on_error=fail_on_error)
 
 
 @main.command("reindex-pdf")
 @click.option("--db", "db_path", default="nokia_docs.db", show_default=True,
               type=click.Path(exists=True, dir_okay=False),
               help="SQLite database path.")
-@click.option("--pdf-dir", default=str(DEFAULT_PDF_DIR), show_default=True,
+@click.option("--pdf-dir", required=True,
               type=click.Path(file_okay=False),
               help="Directory containing Nokia chassis installation guide PDFs.")
-def reindex_pdf_cmd(db_path: str, pdf_dir: str):
+@click.option("--fail-on-error", is_flag=True,
+              help="Exit with an error if any PDF fails to parse.")
+def reindex_pdf_cmd(db_path: str, pdf_dir: str, fail_on_error: bool):
     """Remove existing installation guide rows and index PDFs again."""
     from pathlib import Path
-    reindex_pdfs(Path(db_path), Path(pdf_dir))
+    reindex_pdfs(Path(db_path), Path(pdf_dir), fail_on_error=fail_on_error)
 
 
 @main.command("serve")

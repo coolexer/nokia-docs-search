@@ -18,11 +18,12 @@ import queue
 import sqlite3
 import threading
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 import click
 
-from nokia_docs.db import open_write_db
+from nokia_docs.db import insert_records, open_write_db
 from nokia_docs.parse import Chunk, parse_html
 
 log = logging.getLogger(__name__)
@@ -37,33 +38,12 @@ def _open_db(db_path: Path, reset: bool = False) -> sqlite3.Connection:
 
 def _insert_chunks(conn: sqlite3.Connection, chunks: list[Chunk]) -> int:
     """Insert chunks into docs + docs_fts. Returns number actually inserted."""
-    inserted = 0
-    for c in chunks:
-        try:
-            cur = conn.execute(
-                """INSERT OR IGNORE INTO docs
-                   (product_line, book, rel_path, page_title, section_id,
-                    section_title, section_path, depth, char_len)
-                   VALUES (?,?,?,?,?,?,?,?,?)""",
-                (c.product_line, c.book, c.rel_path, c.page_title,
-                 c.section_id, c.section_title, c.section_path,
-                 c.depth, c.char_len),
-            )
-            if cur.lastrowid and cur.rowcount:
-                doc_id = cur.lastrowid
-                conn.execute(
-                    "INSERT OR IGNORE INTO docs_body (id, body) VALUES (?,?)",
-                    (doc_id, c.body),
-                )
-                conn.execute(
-                    """INSERT INTO docs_fts(rowid, section_title, page_title, section_path, body)
-                       VALUES (?,?,?,?,?)""",
-                    (doc_id, c.section_title, c.page_title, c.section_path, c.body),
-                )
-                inserted += 1
-        except sqlite3.Error as e:
-            log.warning("Insert failed for %s/%s: %s", c.rel_path, c.section_id, e)
-    return inserted
+    rows = []
+    for chunk in chunks:
+        row = asdict(chunk)
+        row["char_len"] = chunk.char_len
+        rows.append(row)
+    return insert_records(conn, rows)
 
 
 # --------------------------------------------------------------------------- #
@@ -96,17 +76,11 @@ def _writer_thread(conn: sqlite3.Connection, q: queue.Queue, counters: dict) -> 
         if not batch:
             return
         try:
-            conn.execute("BEGIN")
             n = _insert_chunks(conn, batch)
-            conn.execute("COMMIT")
             total += n
             counters["inserted"] = total
         except sqlite3.Error as exc:
             log.error("Batch flush failed (%d chunks): %s", len(batch), exc)
-            try:
-                conn.execute("ROLLBACK")
-            except sqlite3.Error:
-                pass
         finally:
             batch.clear()
 
@@ -177,6 +151,7 @@ def index_cmd(docs_root: str, output: str, reset: bool, workers: int) -> None:
 
     t0 = time.monotonic()
     processed = 0
+    interrupted = False
 
     try:
         args_iter = ((f, root) for f in html_files)
@@ -206,7 +181,8 @@ def index_cmd(docs_root: str, output: str, reset: bool, workers: int) -> None:
                 pool.close()
                 pool.join()
     except KeyboardInterrupt:
-        click.echo("\nInterrupted — flushing and closing DB…")
+        interrupted = True
+        click.echo("\nIndex interrupted - flushing and closing DB...")
     finally:
         write_q.put(_SENTINEL)
         writer.join()
@@ -214,10 +190,14 @@ def index_cmd(docs_root: str, output: str, reset: bool, workers: int) -> None:
     elapsed = time.monotonic() - t0
     total_inserted = counters["inserted"]
 
-    click.echo("\nOptimising FTS5 index…")
-    conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
-    conn.commit()
+    if not interrupted:
+        click.echo("\nOptimising FTS5 index...")
+        conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
+        conn.commit()
     conn.close()
+
+    if interrupted:
+        raise click.ClickException("Index interrupted before completion.")
 
     db_mb = db_path.stat().st_size / 1024 / 1024
     click.echo("\nIndex summary")

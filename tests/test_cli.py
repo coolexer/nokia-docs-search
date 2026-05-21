@@ -13,6 +13,9 @@ def test_cli_exposes_index_pdf_command():
     result = CliRunner().invoke(main, ["index-pdf", "--help"])
     assert result.exit_code == 0
     assert "Index Nokia chassis installation guide PDFs" in result.output
+    assert "--pdf-dir" in result.output
+    assert "--fail-on-error" in result.output
+    assert "C:\\!" not in result.output
 
 
 def test_cli_exposes_reindex_commands():

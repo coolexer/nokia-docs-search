@@ -1,4 +1,5 @@
 """Unit tests for parse_pdf filename utilities."""
+import os
 import sys
 from pathlib import Path
 
@@ -143,12 +144,13 @@ def test_deduplicate_single_file(tmp_path):
 
 # ---------- parse_pdf integration ----------
 
-SAMPLE_PDF = Path(r"C:\!Docs\OneDrive - Nokia\Docs\chassis installation guide\3HE19506AAABTQZZA01_V1_7705 SAR-Ax Chassis Installation Guide 23.10.R1.pdf")
+SAMPLE_PDF_ENV = "NOKIA_DOCS_SAMPLE_PDF"
+SAMPLE_PDF = Path(os.environ.get(SAMPLE_PDF_ENV, "__missing_nokia_sample.pdf"))
 
 
 @pytest.mark.skipif(
     not SAMPLE_PDF.exists(),
-    reason="Nokia PDF not available in test environment",
+    reason=f"Nokia PDF not available; set {SAMPLE_PDF_ENV}",
 )
 def test_parse_pdf_returns_chunks():
     from nokia_docs.parse_pdf import parse_pdf
@@ -164,7 +166,7 @@ def test_parse_pdf_returns_chunks():
 
 @pytest.mark.skipif(
     not SAMPLE_PDF.exists(),
-    reason="Nokia PDF not available in test environment",
+    reason=f"Nokia PDF not available; set {SAMPLE_PDF_ENV}",
 )
 def test_parse_pdf_chunk_structure():
     from nokia_docs.parse_pdf import parse_pdf
@@ -183,7 +185,7 @@ def test_parse_pdf_chunk_structure():
 
 @pytest.mark.skipif(
     not SAMPLE_PDF.exists(),
-    reason="Nokia PDF not available in test environment",
+    reason=f"Nokia PDF not available; set {SAMPLE_PDF_ENV}",
 )
 def test_parse_pdf_no_noise():
     """Running headers / footers should not appear in body."""
@@ -195,7 +197,7 @@ def test_parse_pdf_no_noise():
 
 @pytest.mark.skipif(
     not SAMPLE_PDF.exists(),
-    reason="Nokia PDF not available in test environment",
+    reason=f"Nokia PDF not available; set {SAMPLE_PDF_ENV}",
 )
 def test_parse_pdf_no_oversized_chunks():
     """No chunk body should exceed 4000 chars."""
