@@ -158,7 +158,7 @@ def _sanitize_query(query: str) -> str:
     # If the user is using FTS5 syntax explicitly, pass through.
     # Use word-boundary regex so words like "standby", "random", "sandbox"
     # don't accidentally match the substring "AND"/"OR"/"NOT".
-    if re.search(r'\b(AND|OR|NOT)\b', query) or any(op in query for op in (" + ", " * ")):
+    if re.search(r'\b(AND|OR|NOT)\b', query) or any(op in query for op in (" + ", "*")):
         return query
 
     # If already fully quoted, pass through.

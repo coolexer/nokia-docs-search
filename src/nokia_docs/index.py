@@ -22,6 +22,7 @@ from pathlib import Path
 
 import click
 
+from nokia_docs.db import open_write_db
 from nokia_docs.parse import Chunk, parse_html
 
 log = logging.getLogger(__name__)
@@ -30,21 +31,8 @@ log = logging.getLogger(__name__)
 # DB helpers                                                                    #
 # --------------------------------------------------------------------------- #
 
-_SCHEMA_FILE = Path(__file__).parent / "schema.sql"
-
-
 def _open_db(db_path: Path, reset: bool = False) -> sqlite3.Connection:
-    if reset and db_path.exists():
-        db_path.unlink()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path, check_same_thread=False)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA cache_size=-64000")  # 64 MB
-    schema = _SCHEMA_FILE.read_text(encoding="utf-8")
-    conn.executescript(schema)
-    conn.commit()
-    return conn
+    return open_write_db(db_path, reset=reset)
 
 
 def _insert_chunks(conn: sqlite3.Connection, chunks: list[Chunk]) -> int:
@@ -86,7 +74,8 @@ def _parse_worker(args: tuple[Path, Path]) -> list[Chunk]:
     html_path, docs_root = args
     try:
         return parse_html(html_path, docs_root)
-    except Exception:
+    except Exception as exc:
+        log.warning("Parse failed for %s: %s", html_path, exc)
         return []
 
 
