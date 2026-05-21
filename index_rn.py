@@ -10,19 +10,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from nokia_docs.db import insert_records as _insert_batch
-from nokia_docs.db import open_write_db as _open_db
 from nokia_docs.rn import (
-    _build_body,
-    _build_body_eol,
-    _slug,
-    _strip_html,
     index_release_notes,
-    load_csv_product,
-    load_eol_json,
+)
+from nokia_docs.rn import (
     main as _cli_main,
 )
-
 
 DB_PATH = Path("nokia_docs.db")
 RN_DIR = Path(".")

@@ -179,9 +179,15 @@ def index_cmd(docs_root: str, output: str, reset: bool, workers: int) -> None:
     processed = 0
 
     try:
-        with multiprocessing.Pool(processes=n_workers) as pool:
-            args_iter = ((f, root) for f in html_files)
-            for chunks in pool.imap_unordered(_parse_worker, args_iter, chunksize=10):
+        args_iter = ((f, root) for f in html_files)
+        pool = None
+        if n_workers == 1:
+            chunk_iter = (_parse_worker(args) for args in args_iter)
+        else:
+            pool = multiprocessing.Pool(processes=n_workers)
+            chunk_iter = pool.imap_unordered(_parse_worker, args_iter, chunksize=10)
+        try:
+            for chunks in chunk_iter:
                 if chunks:
                     write_q.put(chunks)
                 processed += 1
@@ -195,6 +201,10 @@ def index_cmd(docs_root: str, output: str, reset: bool, workers: int) -> None:
                         f"{rate:.0f} files/s  ETA {eta:.0f}s      ",
                         nl=(processed == total_files),
                     )
+        finally:
+            if pool is not None:
+                pool.close()
+                pool.join()
     except KeyboardInterrupt:
         click.echo("\nInterrupted — flushing and closing DB…")
     finally:
@@ -204,13 +214,15 @@ def index_cmd(docs_root: str, output: str, reset: bool, workers: int) -> None:
     elapsed = time.monotonic() - t0
     total_inserted = counters["inserted"]
 
-    click.echo(f"\nOptimising FTS5 index…")
+    click.echo("\nOptimising FTS5 index…")
     conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
     conn.commit()
     conn.close()
 
     db_mb = db_path.stat().st_size / 1024 / 1024
-    click.echo(f"\nDone in {elapsed:.1f}s")
-    click.echo(f"  Chunks inserted : {total_inserted:,}")
-    click.echo(f"  DB size         : {db_mb:.1f} MB")
-    click.echo(f"  DB path         : {db_path}")
+    click.echo("\nIndex summary")
+    click.echo(f"  HTML files parsed : {processed:,}")
+    click.echo(f"  Chunks inserted   : {total_inserted:,}")
+    click.echo(f"  Duration seconds  : {elapsed:.1f}")
+    click.echo(f"  DB size           : {db_mb:.1f} MB")
+    click.echo(f"  DB path           : {db_path}")

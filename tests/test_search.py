@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-from nokia_docs.index import _open_db, _insert_chunks
+from nokia_docs.index import _insert_chunks, _open_db
 from nokia_docs.parse import Chunk
 from nokia_docs.search import _sanitize_query, search_docs
 

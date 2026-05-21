@@ -7,7 +7,6 @@ Public API:
 from __future__ import annotations
 
 import re
-from collections import defaultdict
 from pathlib import Path
 
 
@@ -143,7 +142,7 @@ _HEADING_SIZE_MIN_DEFAULT = 13.5
 _NOISE_SIZE_MAX_DEFAULT   = 10.5
 
 
-def _detect_thresholds(doc: "fitz.Document") -> tuple[float, float]:
+def _detect_thresholds(doc: object) -> tuple[float, float]:
     """Auto-detect heading_min and noise_max from the PDF's font-size distribution.
 
     Strategy:

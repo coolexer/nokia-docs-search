@@ -14,6 +14,12 @@ dependencies = [
     "pymupdf>=1.24",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "ruff>=0.14",
+]
+
 [project.scripts]
 nokia-docs = "nokia_docs.cli:main"
 
@@ -22,3 +28,18 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 nokia_docs = ["schema.sql"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]

@@ -1,5 +1,6 @@
 """Click CLI entrypoint: nokia-docs <command>"""
 import click
+
 from nokia_docs.index import index_cmd
 from nokia_docs.pdf_index import DEFAULT_PDF_DIR, index_pdfs, reindex_pdfs
 from nokia_docs.rn import index_release_notes, reindex_release_notes

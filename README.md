@@ -303,6 +303,17 @@ The tests cover:
 - FTS prefix query behavior
 - parser failure logging
 - CLI command registration
+- product registry consistency
+- HTML and release-note fixture indexing
+
+Run linting for maintained code paths:
+
+```bash
+python -m ruff check src tests index_rn.py index_pdf.py reindex_rn.py reindex_pdf.py
+```
+
+GitHub Actions runs linting, bytecode compilation, and the full test suite on
+push and pull requests.
 
 Some PDF integration tests are skipped unless the local sample PDF path exists.
 

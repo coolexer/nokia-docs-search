@@ -6,24 +6,24 @@ import io
 import json
 import re
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
 from selectolax.lexbor import LexborHTMLParser
 
 from nokia_docs.db import delete_product_lines, insert_records, open_write_db
+from nokia_docs.products import RN_PRODUCTS
+
+RN_PRODUCT_LINES = [p.slug for p in RN_PRODUCTS]
 
 
-RN_PRODUCTS = ["sros", "srl", "sas", "mag-c", "eda"]
-RN_PRODUCT_LINES = ["rn-sros", "rn-srl", "rn-sas", "rn-eda", "rn-mag-c"]
-
-_RN_DISPLAY = {
-    "sros": "Nokia SR OS",
-    "srl": "Nokia SR Linux",
-    "sas": "Nokia 7210 SAS",
-    "mag-c": "Nokia MAG-c",
-    "eda": "Nokia EDA",
-}
+@dataclass
+class IndexReport:
+    inserted: int = 0
+    source_counts: dict[str, int] = field(default_factory=dict)
+    elapsed_seconds: float = 0.0
+    db_size_mb: float = 0.0
 
 
 def _strip_html(text: str) -> str:
@@ -131,7 +131,7 @@ def load_csv_product(product: str, rn_dir: Path = Path(".")) -> list[dict]:
         return []
 
     data_rows = all_rows[1:]  # first row is a metadata/context row
-    display = _RN_DISPLAY.get(product, product)
+    display = next((p.display_name for p in RN_PRODUCTS if p.key == product), product)
     product_line = f"rn-{product}"
 
     records: list[dict] = []
@@ -203,7 +203,7 @@ def load_eol_json(rn_dir: Path = Path(".")) -> list[dict]:
     return records
 
 
-def index_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> int:
+def index_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> IndexReport:
     """Index release notes from rn_dir into db_path."""
     db_path = Path(db_path)
     rn_dir = Path(rn_dir)
@@ -215,11 +215,13 @@ def index_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> int:
 
     conn = open_write_db(db_path)
     total = 0
+    source_counts: dict[str, int] = {}
     t0 = time.monotonic()
     try:
         for product in RN_PRODUCTS:
-            click.echo(f"Loading {product}...", nl=False)
-            records = load_csv_product(product, rn_dir)
+            click.echo(f"Loading {product.key}...", nl=False)
+            records = load_csv_product(product.key, rn_dir)
+            source_counts[product.key] = len(records)
             click.echo(f" {len(records)} entries...", nl=False)
             inserted = insert_records(conn, records)
             click.echo(f" inserted {inserted}")
@@ -227,6 +229,7 @@ def index_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> int:
 
         click.echo("Loading rn_eol.json...", nl=False)
         eol_records = load_eol_json(rn_dir)
+        source_counts["eol"] = len(eol_records)
         click.echo(f" {len(eol_records)} entries...", nl=False)
         inserted = insert_records(conn, eol_records)
         click.echo(f" inserted {inserted}")
@@ -242,10 +245,15 @@ def index_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> int:
     click.echo(f"\nDone in {elapsed:.1f}s")
     click.echo(f"Total RN records inserted: {total:,}")
     click.echo(f"DB size after: {db_path.stat().st_size / 1024 / 1024:.1f} MB")
-    return total
+    return IndexReport(
+        inserted=total,
+        source_counts=source_counts,
+        elapsed_seconds=elapsed,
+        db_size_mb=db_path.stat().st_size / 1024 / 1024,
+    )
 
 
-def reindex_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> int:
+def reindex_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> IndexReport:
     """Remove existing release notes and index them again."""
     db_path = Path(db_path)
     if not db_path.exists():

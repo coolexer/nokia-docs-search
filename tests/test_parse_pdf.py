@@ -1,19 +1,18 @@
 """Unit tests for parse_pdf filename utilities."""
+import sys
 from pathlib import Path
+
 import pytest
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from nokia_docs.parse_pdf import (
+    _chassis_from_filename,
     _doc_base,
     _issue_num,
-    _chassis_from_filename,
-    _slug,
     _split_body,
     deduplicate_pdfs,
 )
-
 
 # ---------- _doc_base ----------
 

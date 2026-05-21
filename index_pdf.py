@@ -10,8 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
-from nokia_docs.pdf_index import DEFAULT_PDF_DIR, index_pdfs, main as _cli_main
-
+from nokia_docs.pdf_index import DEFAULT_PDF_DIR, index_pdfs
+from nokia_docs.pdf_index import main as _cli_main
 
 DB_PATH = Path("nokia_docs.db")
 PDF_DIR = DEFAULT_PDF_DIR

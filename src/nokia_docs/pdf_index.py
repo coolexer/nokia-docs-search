@@ -9,7 +9,6 @@ import click
 from nokia_docs.db import delete_product_lines, insert_records, open_write_db
 from nokia_docs.parse_pdf import deduplicate_pdfs, parse_pdf
 
-
 DEFAULT_PDF_DIR = Path(r"C:\!Docs\OneDrive - Nokia\Docs\chassis installation guide")
 
 

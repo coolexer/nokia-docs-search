@@ -13,7 +13,6 @@ import os
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Optional
 
 from fastmcp import FastMCP
 
@@ -21,11 +20,16 @@ from nokia_docs.search import (
     Document,
     Hit,
     ProductInfo,
+)
+from nokia_docs.search import (
     get_document as _get_document,
+)
+from nokia_docs.search import (
     list_products as _list_products,
+)
+from nokia_docs.search import (
     search_docs as _search_docs,
 )
-
 
 # --------------------------------------------------------------------------- #
 # DB connection — thread-local read-only connections                            #
@@ -88,8 +92,8 @@ mcp = FastMCP(
 @mcp.tool()
 def search_docs(
     query: str,
-    product_line: Optional[str] = None,
-    book: Optional[str] = None,
+    product_line: str | None = None,
+    book: str | None = None,
     top_k: int = 10,
 ) -> list[dict]:
     """Search Nokia documentation and release notes using full-text search (FTS5/BM25).

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from selectolax.lexbor import LexborHTMLParser, LexborNode
 
+from nokia_docs.products import PRODUCT_PATTERNS
 
 # --------------------------------------------------------------------------- #
 # Product line / book detection                                                 #
@@ -49,7 +50,7 @@ def _detect_product(rel_path: str) -> str:
     parts = Path(rel_path).parts
     for part in parts:
         part_lower = part.lower()
-        for pattern, slug in _PRODUCT_PATTERNS:
+        for pattern, slug in PRODUCT_PATTERNS:
             if pattern.lower() in part_lower:
                 return slug
     return parts[0].lower().replace(" ", "-") if parts else "unknown"
