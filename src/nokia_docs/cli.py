@@ -1,6 +1,7 @@
 """Click CLI entrypoint: nokia-docs <command>"""
 import click
 
+from nokia_docs.db import read_build_manifest, validate_database, validate_metadata
 from nokia_docs.index import index_cmd
 from nokia_docs.pdf_index import index_pdfs, reindex_pdfs
 from nokia_docs.rn import index_release_notes, reindex_release_notes
@@ -22,10 +23,12 @@ main.add_command(index_cmd, name="index")
 @click.option("--rn-dir", default=".", show_default=True,
               type=click.Path(file_okay=False),
               help="Directory containing rn_*.csv and rn_eol.json.")
-def index_rn_cmd(db_path: str, rn_dir: str):
+@click.option("--fail-on-error", is_flag=True,
+              help="Exit with an error if any expected RN source is missing or empty.")
+def index_rn_cmd(db_path: str, rn_dir: str, fail_on_error: bool):
     """Index Nokia release notes CSV/JSON files."""
     from pathlib import Path
-    index_release_notes(Path(db_path), Path(rn_dir))
+    index_release_notes(Path(db_path), Path(rn_dir), fail_on_error=fail_on_error)
 
 
 @main.command("reindex-rn")
@@ -35,10 +38,40 @@ def index_rn_cmd(db_path: str, rn_dir: str):
 @click.option("--rn-dir", default=".", show_default=True,
               type=click.Path(file_okay=False),
               help="Directory containing rn_*.csv and rn_eol.json.")
-def reindex_rn_cmd(db_path: str, rn_dir: str):
+@click.option("--fail-on-error", is_flag=True,
+              help="Exit with an error if any expected RN source is missing or empty.")
+def reindex_rn_cmd(db_path: str, rn_dir: str, fail_on_error: bool):
     """Remove existing release notes and index them again."""
     from pathlib import Path
-    reindex_release_notes(Path(db_path), Path(rn_dir))
+    reindex_release_notes(Path(db_path), Path(rn_dir), fail_on_error=fail_on_error)
+
+
+@main.command("validate-db")
+@click.option("--db", "db_path", default="nokia_docs.db", show_default=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="SQLite database path.")
+def validate_db_cmd(db_path: str):
+    """Validate a Nokia documentation search database."""
+    import sqlite3
+    from pathlib import Path
+
+    conn = sqlite3.connect(Path(db_path))
+    try:
+        metadata = validate_metadata(conn)
+        errors = validate_database(conn)
+        manifest = read_build_manifest(conn)
+    finally:
+        conn.close()
+
+    if errors:
+        for error in errors:
+            click.echo(f"ERROR: {error}")
+        raise click.ClickException(f"Database validation failed with {len(errors)} error(s).")
+
+    click.echo("Database validation OK")
+    click.echo(f"Schema version: {metadata['schema_version']}")
+    if manifest:
+        click.echo(f"Build manifest entries: {len(manifest)}")
 
 
 @main.command("index-pdf")

@@ -19,6 +19,7 @@ from nokia_docs.rn import (
 
 DB_PATH = Path("nokia_docs.db")
 RN_DIR = Path(".")
+FAIL_ON_ERROR = False
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -29,7 +30,7 @@ def main(argv: list[str] | None = None) -> None:
     if Path(sys.argv[0]).resolve() == Path(__file__).resolve():
         _cli_main(sys.argv[1:])
         return
-    index_release_notes(DB_PATH, RN_DIR)
+    index_release_notes(DB_PATH, RN_DIR, fail_on_error=FAIL_ON_ERROR)
 
 
 if __name__ == "__main__":

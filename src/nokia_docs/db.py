@@ -62,6 +62,55 @@ def validate_metadata(conn: sqlite3.Connection) -> dict[str, str]:
     return metadata
 
 
+def record_build_manifest(conn: sqlite3.Connection, values: dict[str, object]) -> None:
+    """Record build/source metadata for a generated database artifact."""
+    normalized = {key: str(value) for key, value in values.items()}
+    normalized["manifest_updated_utc"] = datetime.now(UTC).isoformat(timespec="seconds")
+    conn.executemany(
+        """INSERT INTO build_manifest(key, value) VALUES (?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+        normalized.items(),
+    )
+    conn.commit()
+
+
+def read_build_manifest(conn: sqlite3.Connection) -> dict[str, str]:
+    """Read optional DB build manifest values."""
+    try:
+        return dict(conn.execute("SELECT key, value FROM build_manifest").fetchall())
+    except sqlite3.Error:
+        return {}
+
+
+def validate_database(conn: sqlite3.Connection) -> list[str]:
+    """Return structural validation errors for a search database."""
+    errors: list[str] = []
+    validate_metadata(conn)
+
+    doc_count = conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
+    body_count = conn.execute("SELECT COUNT(*) FROM docs_body").fetchone()[0]
+    fts_count = conn.execute("SELECT COUNT(*) FROM docs_fts").fetchone()[0]
+
+    if doc_count != body_count:
+        errors.append(f"docs/docs_body row count mismatch: docs={doc_count}, docs_body={body_count}")
+    if doc_count != fts_count:
+        errors.append(f"docs/docs_fts row count mismatch: docs={doc_count}, docs_fts={fts_count}")
+
+    orphan_body = conn.execute(
+        "SELECT COUNT(*) FROM docs_body b LEFT JOIN docs d ON d.id = b.id WHERE d.id IS NULL"
+    ).fetchone()[0]
+    if orphan_body:
+        errors.append(f"orphan docs_body rows: {orphan_body}")
+
+    orphan_fts = conn.execute(
+        "SELECT COUNT(*) FROM docs_fts f LEFT JOIN docs d ON d.id = f.rowid WHERE d.id IS NULL"
+    ).fetchone()[0]
+    if orphan_fts:
+        errors.append(f"orphan docs_fts rows: {orphan_fts}")
+
+    return errors
+
+
 def insert_records(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
     """Insert normalized document records into docs, docs_body, and docs_fts."""
     inserted = 0

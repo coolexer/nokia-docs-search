@@ -72,8 +72,9 @@ Recommended team flow:
 4. Place the DB on each user's machine and point the MCP server at it with
    `NOKIA_DOCS_DB`.
 
-Generated databases include a small `metadata` table with the schema version and
-application name. The MCP server validates this metadata before opening the DB.
+Generated databases include `metadata` and `build_manifest` tables. The MCP
+server validates schema metadata before opening the DB, and `validate-db` checks
+basic table consistency before the artifact is distributed.
 
 Do not commit generated database files to GitHub:
 
@@ -127,6 +128,12 @@ Index them into the same database:
 nokia-docs index-rn --db nokia_docs.db --rn-dir /path/to/release-note-files
 ```
 
+Use strict failure handling for release builds:
+
+```bash
+nokia-docs index-rn --db nokia_docs.db --rn-dir /path/to/release-note-files --fail-on-error
+```
+
 To replace existing release-note rows and index them again:
 
 ```bash
@@ -139,6 +146,18 @@ The old scripts still work as compatibility wrappers:
 python index_rn.py --db nokia_docs.db --rn-dir /path/to/release-note-files
 python reindex_rn.py nokia_docs.db --rn-dir /path/to/release-note-files
 ```
+
+### 4. Validate The Database Artifact
+
+Before distributing a rebuilt database, validate schema metadata and table
+consistency:
+
+```bash
+nokia-docs validate-db --db nokia_docs.db
+```
+
+The command checks schema compatibility plus `docs`, `docs_body`, and `docs_fts`
+row consistency.
 
 ### 3. Index Chassis Installation Guide PDFs
 
@@ -387,6 +406,11 @@ nokia-docs index /path/to/nokia-docs-root -o nokia_docs.db --reset
 
 The MCP server found an old or manually created database without compatible
 metadata. Rebuild or download a current DB artifact.
+
+### `docs/docs_body row count mismatch`
+
+The database failed artifact validation. Rebuild it with strict indexing flags
+and run `nokia-docs validate-db --db nokia_docs.db` again before distributing it.
 
 ### Search returns too many unrelated hits
 

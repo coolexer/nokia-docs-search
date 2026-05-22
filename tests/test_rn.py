@@ -2,6 +2,9 @@ import json
 import sqlite3
 from pathlib import Path
 
+import click
+import pytest
+
 from nokia_docs.rn import index_release_notes
 from nokia_docs.search import search_docs
 
@@ -43,3 +46,11 @@ def test_index_release_notes_fixture_returns_report_and_searchable_rows(tmp_path
         conn.close()
 
     assert [h.section_title for h in hits] == ["EVPN route fix"]
+
+
+def test_index_release_notes_fail_on_error_requires_all_sources(tmp_path: Path):
+    rn_dir = tmp_path / "rn"
+    rn_dir.mkdir()
+
+    with pytest.raises(click.ClickException, match="Missing release-note source"):
+        index_release_notes(tmp_path / "nokia_docs.db", rn_dir, fail_on_error=True)

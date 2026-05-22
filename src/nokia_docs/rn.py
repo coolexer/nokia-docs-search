@@ -12,7 +12,7 @@ from pathlib import Path
 import click
 from selectolax.lexbor import LexborHTMLParser
 
-from nokia_docs.db import delete_product_lines, insert_records, open_write_db
+from nokia_docs.db import delete_product_lines, insert_records, open_write_db, record_build_manifest
 from nokia_docs.products import RN_PRODUCTS
 
 RN_PRODUCT_LINES = [p.slug for p in RN_PRODUCTS]
@@ -22,6 +22,7 @@ RN_PRODUCT_LINES = [p.slug for p in RN_PRODUCTS]
 class IndexReport:
     inserted: int = 0
     source_counts: dict[str, int] = field(default_factory=dict)
+    missing_sources: list[str] = field(default_factory=list)
     elapsed_seconds: float = 0.0
     db_size_mb: float = 0.0
 
@@ -203,7 +204,11 @@ def load_eol_json(rn_dir: Path = Path(".")) -> list[dict]:
     return records
 
 
-def index_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> IndexReport:
+def index_release_notes(
+    db_path: Path,
+    rn_dir: Path = Path("."),
+    fail_on_error: bool = False,
+) -> IndexReport:
     """Index release notes from rn_dir into db_path."""
     db_path = Path(db_path)
     rn_dir = Path(rn_dir)
@@ -216,20 +221,31 @@ def index_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> IndexReport:
     conn = open_write_db(db_path)
     total = 0
     source_counts: dict[str, int] = {}
+    missing_sources: list[str] = []
     t0 = time.monotonic()
     try:
         for product in RN_PRODUCTS:
             click.echo(f"Loading {product.key}...", nl=False)
+            csv_file = rn_dir / f"rn_{product.key}.csv"
+            if not csv_file.exists():
+                missing_sources.append(str(csv_file))
             records = load_csv_product(product.key, rn_dir)
             source_counts[product.key] = len(records)
+            if fail_on_error and csv_file.exists() and not records:
+                missing_sources.append(str(csv_file))
             click.echo(f" {len(records)} entries...", nl=False)
             inserted = insert_records(conn, records)
             click.echo(f" inserted {inserted}")
             total += inserted
 
         click.echo("Loading rn_eol.json...", nl=False)
+        eol_file = rn_dir / "rn_eol.json"
+        if not eol_file.exists():
+            missing_sources.append(str(eol_file))
         eol_records = load_eol_json(rn_dir)
         source_counts["eol"] = len(eol_records)
+        if fail_on_error and eol_file.exists() and not eol_records:
+            missing_sources.append(str(eol_file))
         click.echo(f" {len(eol_records)} entries...", nl=False)
         inserted = insert_records(conn, eol_records)
         click.echo(f" inserted {inserted}")
@@ -244,16 +260,41 @@ def index_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> IndexReport:
     elapsed = time.monotonic() - t0
     click.echo(f"\nDone in {elapsed:.1f}s")
     click.echo(f"Total RN records inserted: {total:,}")
+    if missing_sources:
+        click.echo(f"Missing/empty RN sources: {len(missing_sources)}")
     click.echo(f"DB size after: {db_path.stat().st_size / 1024 / 1024:.1f} MB")
-    return IndexReport(
+    report = IndexReport(
         inserted=total,
         source_counts=source_counts,
+        missing_sources=missing_sources,
         elapsed_seconds=elapsed,
         db_size_mb=db_path.stat().st_size / 1024 / 1024,
     )
+    if fail_on_error and missing_sources:
+        raise click.ClickException(
+            f"Missing release-note source file(s): {', '.join(missing_sources)}"
+        )
+    conn = open_write_db(db_path)
+    try:
+        record_build_manifest(
+            conn,
+            {
+                "rn_source": str(rn_dir.resolve()),
+                "rn_records_inserted": total,
+                "rn_missing_sources": len(missing_sources),
+                **{f"rn_{key}_records": value for key, value in source_counts.items()},
+            },
+        )
+    finally:
+        conn.close()
+    return report
 
 
-def reindex_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> IndexReport:
+def reindex_release_notes(
+    db_path: Path,
+    rn_dir: Path = Path("."),
+    fail_on_error: bool = False,
+) -> IndexReport:
     """Remove existing release notes and index them again."""
     db_path = Path(db_path)
     if not db_path.exists():
@@ -264,7 +305,7 @@ def reindex_release_notes(db_path: Path, rn_dir: Path = Path(".")) -> IndexRepor
     finally:
         conn.close()
     click.echo(f"Deleted {deleted} existing release-note rows")
-    return index_release_notes(db_path, rn_dir)
+    return index_release_notes(db_path, rn_dir, fail_on_error=fail_on_error)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -273,5 +314,6 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Index Nokia release notes.")
     parser.add_argument("--db", default="nokia_docs.db")
     parser.add_argument("--rn-dir", default=".")
+    parser.add_argument("--fail-on-error", action="store_true")
     args = parser.parse_args(argv)
-    index_release_notes(Path(args.db), Path(args.rn_dir))
+    index_release_notes(Path(args.db), Path(args.rn_dir), fail_on_error=args.fail_on_error)

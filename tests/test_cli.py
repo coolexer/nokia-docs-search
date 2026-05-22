@@ -15,6 +15,18 @@ def test_cli_exposes_index_fail_on_error():
     assert "--fail-on-error" in result.output
 
 
+def test_cli_exposes_validate_db_command():
+    result = CliRunner().invoke(main, ["validate-db", "--help"])
+    assert result.exit_code == 0
+    assert "Validate a Nokia documentation search database" in result.output
+
+
+def test_cli_exposes_index_rn_fail_on_error():
+    result = CliRunner().invoke(main, ["index-rn", "--help"])
+    assert result.exit_code == 0
+    assert "--fail-on-error" in result.output
+
+
 def test_cli_exposes_index_pdf_command():
     result = CliRunner().invoke(main, ["index-pdf", "--help"])
     assert result.exit_code == 0

@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS metadata (
     value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS build_manifest (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- Separate body table for get_document (full text retrieval without FTS5 overhead).
 CREATE TABLE IF NOT EXISTS docs_body (
     id   INTEGER PRIMARY KEY,  -- same rowid as docs.id

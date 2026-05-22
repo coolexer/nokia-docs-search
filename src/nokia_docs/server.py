@@ -130,10 +130,7 @@ def search_docs(
     Returns list of hits with doc_id, product_line, book, section_title,
     section_path, snippet (with [[highlighted]] terms), and BM25 score.
     """
-    try:
-        conn = _get_conn()
-    except RuntimeError as exc:
-        return [{"error": str(exc)}]
+    conn = _get_conn()
 
     hits: list[Hit] = _search_docs(
         query=query,
@@ -173,10 +170,7 @@ def get_document(
 
     Returns full body text, metadata, and optionally neighbour section list.
     """
-    try:
-        conn = _get_conn()
-    except RuntimeError as exc:
-        return {"error": str(exc)}
+    conn = _get_conn()
 
     doc: Document | None = _get_document(
         doc_id=doc_id,
@@ -206,10 +200,7 @@ def list_products() -> list[dict]:
     Returns each product's slug, display name, section count, and book list.
     Call this to know what's available before searching.
     """
-    try:
-        conn = _get_conn()
-    except RuntimeError as exc:
-        return [{"error": str(exc)}]
+    conn = _get_conn()
 
     products: list[ProductInfo] = _list_products(conn)
     return [

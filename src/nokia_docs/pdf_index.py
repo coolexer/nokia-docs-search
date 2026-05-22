@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from nokia_docs.db import delete_product_lines, insert_records, open_write_db
+from nokia_docs.db import delete_product_lines, insert_records, open_write_db, record_build_manifest
 from nokia_docs.parse_pdf import deduplicate_pdfs, parse_pdf
 
 DEFAULT_PDF_DIR = None
@@ -85,6 +85,20 @@ def index_pdfs(
     )
     if fail_on_error and failed_files:
         raise click.ClickException(f"Failed to index {len(failed_files)} PDF file(s).")
+    conn = open_write_db(db_path)
+    try:
+        record_build_manifest(
+            conn,
+            {
+                "pdf_source": str(pdf_dir.resolve()),
+                "pdf_files_discovered": len(pdfs),
+                "pdf_files_parsed": parsed,
+                "pdf_chunks_inserted": total,
+                "pdf_failed_files": len(failed_files),
+            },
+        )
+    finally:
+        conn.close()
     return report
 
 

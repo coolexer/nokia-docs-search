@@ -23,7 +23,7 @@ from pathlib import Path
 
 import click
 
-from nokia_docs.db import insert_records, open_write_db
+from nokia_docs.db import insert_records, open_write_db, record_build_manifest
 from nokia_docs.parse import Chunk, parse_html
 
 log = logging.getLogger(__name__)
@@ -243,6 +243,22 @@ def index_cmd(docs_root: str, output: str, reset: bool, workers: int, fail_on_er
     click.echo(f"  Duration seconds  : {elapsed:.1f}")
     click.echo(f"  DB size           : {db_mb:.1f} MB")
     click.echo(f"  DB path           : {db_path}")
+
+    conn = _open_db(db_path, reset=False)
+    try:
+        record_build_manifest(
+            conn,
+            {
+                "html_source": str(root),
+                "html_files": total_files,
+                "html_parsed_files": report.parsed_files,
+                "html_chunks_inserted": total_inserted,
+                "html_parse_failures": len(parse_failures),
+                "html_write_failures": write_failures,
+            },
+        )
+    finally:
+        conn.close()
 
     if fail_on_error and (report.parse_failures or report.write_failures):
         raise click.ClickException(
