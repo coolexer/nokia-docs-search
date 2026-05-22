@@ -1,5 +1,10 @@
 """Find all product slugs from the Nokia RN portal navigation."""
-import json, httpx, re
+import json
+import re
+
+import httpx
+import urllib3
+from selectolax.lexbor import LexborHTMLParser
 
 with open('rn_cookies.json') as f:
     raw = json.load(f)
@@ -12,13 +17,12 @@ HEADERS = {
     'Referer': 'https://ip.ext.net.nokia.com/s2/rn',
 }
 
-import urllib3; urllib3.disable_warnings()
+urllib3.disable_warnings()
 
 with httpx.Client(follow_redirects=True, timeout=30, verify=False, cookies=cookies, headers=HEADERS) as client:
 
     # Fetch main RN page to find all product links
     r = client.get(BASE + '/s2/rn')
-    from selectolax.lexbor import LexborHTMLParser
     tree = LexborHTMLParser(r.text)
 
     print("=== Links on /s2/rn ===")

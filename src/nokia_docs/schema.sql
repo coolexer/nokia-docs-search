@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS docs (
 CREATE INDEX IF NOT EXISTS idx_docs_product ON docs(product_line);
 CREATE INDEX IF NOT EXISTS idx_docs_book    ON docs(product_line, book);
 
+CREATE TABLE IF NOT EXISTS metadata (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- Separate body table for get_document (full text retrieval without FTS5 overhead).
 CREATE TABLE IF NOT EXISTS docs_body (
     id   INTEGER PRIMARY KEY,  -- same rowid as docs.id

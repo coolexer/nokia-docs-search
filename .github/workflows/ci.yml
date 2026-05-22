@@ -34,10 +34,14 @@ jobs:
           python -m pip install -e ".[dev]"
 
       - name: Ruff
-        run: python -m ruff check src tests index_rn.py index_pdf.py reindex_rn.py reindex_pdf.py
+        run: python -m ruff check .
 
       - name: Compile
-        run: python -m compileall src tests index_rn.py index_pdf.py reindex_rn.py reindex_pdf.py
+        run: >
+          python -m compileall
+          src tests
+          analyze_rn.py download_all_rn.py fetch_rn_csv.py find_csv.py find_products.py
+          index_rn.py index_pdf.py probe_rn.py reindex_rn.py reindex_pdf.py
 
       - name: Tests
         run: python -m pytest

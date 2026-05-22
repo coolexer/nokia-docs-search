@@ -16,6 +16,7 @@ from pathlib import Path
 
 from fastmcp import FastMCP
 
+from nokia_docs.db import validate_metadata
 from nokia_docs.search import (
     Document,
     Hit,
@@ -37,6 +38,18 @@ from nokia_docs.search import (
 
 _db_path: Path | None = None
 _tls = threading.local()
+
+
+def _validate_database(db_path: Path) -> None:
+    """Validate that db_path is a readable, compatible search database."""
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    except sqlite3.Error as exc:
+        raise RuntimeError(f"Database is not readable: {db_path}") from exc
+    try:
+        validate_metadata(conn)
+    finally:
+        conn.close()
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -61,6 +74,7 @@ def _get_conn() -> sqlite3.Connection:
                 f"Database not found: {p}\n"
                 "Run: nokia-docs index <docs_root> -o <path/to/nokia_docs.db>"
             )
+        _validate_database(p)
         _db_path = p
 
     # Per-thread connection

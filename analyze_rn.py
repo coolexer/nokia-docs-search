@@ -1,6 +1,7 @@
 """Analyze saved Nokia RN HTML file. Usage: python analyze_rn.py rn_page.html"""
 import sys
 from pathlib import Path
+
 from selectolax.lexbor import LexborHTMLParser
 
 f = Path(sys.argv[1] if len(sys.argv) > 1 else "rn_page.html")

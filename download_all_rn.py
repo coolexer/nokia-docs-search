@@ -1,5 +1,10 @@
 """Download all Nokia RN CSV files and show structure."""
-import csv, json, httpx, io, sys
+import csv
+import io
+import json
+
+import httpx
+import urllib3
 
 with open('rn_cookies.json') as f:
     raw = json.load(f)
@@ -15,7 +20,7 @@ HEADERS = {
 # All products found in App.js
 PRODUCTS = ['sros', 'srl', 'sas', 'mag-c', 'eda']
 
-import urllib3; urllib3.disable_warnings()
+urllib3.disable_warnings()
 
 with httpx.Client(follow_redirects=True, timeout=60, verify=False, cookies=cookies, headers=HEADERS) as client:
     for prod in PRODUCTS:

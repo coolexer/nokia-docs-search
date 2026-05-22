@@ -15,6 +15,7 @@ Steps:
 The script will connect to the running Chrome and scrape the page.
 """
 from __future__ import annotations
+
 import sys
 from pathlib import Path
 
@@ -71,7 +72,8 @@ def analyze_and_save(html: str, name: str) -> None:
 
 
 def main():
-    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    from playwright.sync_api import TimeoutError as PWTimeout
+    from playwright.sync_api import sync_playwright
 
     print(f"Connecting to Chrome at {CDP_URL} ...")
     print(f"Target: {BASE_URL}")

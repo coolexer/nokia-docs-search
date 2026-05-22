@@ -1,5 +1,10 @@
 """Fetch Nokia RN CSV files and show structure."""
-import csv, json, httpx, io
+import csv
+import io
+import json
+
+import httpx
+import urllib3
 
 with open('rn_cookies.json') as f:
     raw = json.load(f)
@@ -12,7 +17,7 @@ HEADERS = {
     'Referer': 'https://ip.ext.net.nokia.com/s2/rn/sros',
 }
 
-import urllib3; urllib3.disable_warnings()
+urllib3.disable_warnings()
 
 PRODUCTS = ['sros', 'srlinux', 'ixr', 'sar', 'sas', 'nsp', '7705sar', '7250ixr', '7210sas']
 
@@ -23,7 +28,8 @@ with httpx.Client(follow_redirects=True, timeout=30, verify=False, cookies=cooki
     print(f'Manifest: {r.status_code} {len(r.text)} chars')
     if r.status_code == 200:
         print(r.text[:500])
-        with open('rn_manifest.json', 'w') as f: f.write(r.text)
+        with open('rn_manifest.json', 'w') as f:
+            f.write(r.text)
 
     print()
 
@@ -60,7 +66,9 @@ with httpx.Client(follow_redirects=True, timeout=30, verify=False, cookies=cooki
     r = client.get(BASE + '/s2/rn-eol.json' + CB)
     print(f'\nEOL JSON: {r.status_code} {len(r.text)} chars')
     if r.status_code == 200:
-        with open('rn_eol.json', 'w') as f: f.write(r.text)
+        with open('rn_eol.json', 'w') as f:
+            f.write(r.text)
         data = json.loads(r.text)
         print(f'  Entries: {len(data)}')
-        if data: print(f'  First: {json.dumps(data[0])[:200]}')
+        if data:
+            print(f'  First: {json.dumps(data[0])[:200]}')

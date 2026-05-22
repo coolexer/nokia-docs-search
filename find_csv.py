@@ -1,4 +1,7 @@
-import json, httpx, re
+import json
+
+import httpx
+import urllib3
 
 with open('rn_cookies.json') as f:
     raw = json.load(f)
@@ -10,7 +13,7 @@ headers = {
     'Referer': 'https://ip.ext.net.nokia.com/s2/rn/sros',
 }
 
-import urllib3; urllib3.disable_warnings()
+urllib3.disable_warnings()
 
 with httpx.Client(follow_redirects=True, timeout=30, verify=False, cookies=cookies, headers=headers) as client:
 

@@ -65,10 +65,15 @@ The generated SQLite database is an external runtime artifact.
 Recommended team flow:
 
 1. Build or refresh `nokia_docs.db` in a controlled internal environment.
-2. Publish the DB through an approved internal artifact channel, such as an
+2. Use strict indexing flags for release builds so partial source failures stop
+   the build instead of producing a silently incomplete artifact.
+3. Publish the DB through an approved internal artifact channel, such as an
    internal release, SharePoint folder, package registry, or file share.
-3. Place the DB on each user's machine and point the MCP server at it with
+4. Place the DB on each user's machine and point the MCP server at it with
    `NOKIA_DOCS_DB`.
+
+Generated databases include a small `metadata` table with the schema version and
+application name. The MCP server validates this metadata before opening the DB.
 
 Do not commit generated database files to GitHub:
 
@@ -87,6 +92,12 @@ parses documentation sections, and writes them into a SQLite FTS5 database.
 
 ```bash
 nokia-docs index /path/to/nokia-docs-root -o nokia_docs.db --reset
+```
+
+Use strict failure handling for release builds:
+
+```bash
+nokia-docs index /path/to/nokia-docs-root -o nokia_docs.db --reset --fail-on-error
 ```
 
 Useful options:
@@ -336,6 +347,7 @@ The tests cover:
 - search alias resolution
 - FTS prefix query behavior
 - parser failure logging
+- database metadata and schema-version validation
 - CLI command registration
 - product registry consistency
 - HTML and release-note fixture indexing
@@ -343,7 +355,7 @@ The tests cover:
 Run linting for maintained code paths:
 
 ```bash
-python -m ruff check src tests index_rn.py index_pdf.py reindex_rn.py reindex_pdf.py
+python -m ruff check .
 ```
 
 GitHub Actions runs linting, bytecode compilation, and the full test suite on
@@ -370,6 +382,11 @@ locally:
 ```bash
 nokia-docs index /path/to/nokia-docs-root -o nokia_docs.db --reset
 ```
+
+### `Database schema version ... is not compatible`
+
+The MCP server found an old or manually created database without compatible
+metadata. Rebuild or download a current DB artifact.
 
 ### Search returns too many unrelated hits
 

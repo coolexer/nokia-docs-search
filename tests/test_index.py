@@ -14,9 +14,11 @@ def test_parse_worker_logs_failed_file(monkeypatch, caplog, tmp_path):
     monkeypatch.setattr(index_module, "parse_html", boom)
 
     with caplog.at_level(logging.WARNING, logger="nokia_docs.index"):
-        chunks = index_module._parse_worker((html_path, tmp_path))
+        result = index_module._parse_worker((html_path, tmp_path))
 
-    assert chunks == []
+    assert result.chunks == []
+    assert result.failed_file == str(html_path)
+    assert result.error == "bad html"
     assert "Parse failed" in caplog.text
     assert "broken.html" in caplog.text
     assert "bad html" in caplog.text

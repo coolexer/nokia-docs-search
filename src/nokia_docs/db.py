@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
+SCHEMA_VERSION = 1
+APP_NAME = "nokia-docs-search"
 
 
 def open_write_db(db_path: Path, reset: bool = False) -> sqlite3.Connection:
@@ -19,8 +22,44 @@ def open_write_db(db_path: Path, reset: bool = False) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA cache_size=-64000")
     conn.executescript(SCHEMA_FILE.read_text(encoding="utf-8"))
+    ensure_metadata(conn)
     conn.commit()
     return conn
+
+
+def ensure_metadata(conn: sqlite3.Connection) -> None:
+    """Record schema/app metadata in a writable search database."""
+    values = {
+        "schema_version": str(SCHEMA_VERSION),
+        "app_name": APP_NAME,
+        "metadata_updated_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+    }
+    conn.executemany(
+        """INSERT INTO metadata(key, value) VALUES (?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+        values.items(),
+    )
+
+
+def read_metadata(conn: sqlite3.Connection) -> dict[str, str]:
+    """Read search database metadata as a dictionary."""
+    try:
+        return dict(conn.execute("SELECT key, value FROM metadata").fetchall())
+    except sqlite3.Error as exc:
+        raise RuntimeError("Database metadata table is missing or unreadable.") from exc
+
+
+def validate_metadata(conn: sqlite3.Connection) -> dict[str, str]:
+    """Validate that a database is compatible with this package."""
+    metadata = read_metadata(conn)
+    actual = metadata.get("schema_version")
+    expected = str(SCHEMA_VERSION)
+    if actual != expected:
+        raise RuntimeError(
+            f"Database schema version {actual or 'missing'} is not compatible; "
+            f"expected schema version {expected}."
+        )
+    return metadata
 
 
 def insert_records(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
