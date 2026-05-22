@@ -86,6 +86,16 @@ Do not commit generated database files to GitHub:
 
 ## Build The Database
 
+The current release build should finish with approximately 229k searchable
+sections when all three source families are present:
+
+| Source | Current build size |
+|---|---:|
+| WebHelp HTML files | 9,843 files / 182,830 sections |
+| Release-note records | 24,956 inserted sections |
+| Installation-guide PDFs | 110 PDFs / 21,328 sections |
+| Total searchable sections | 229,114 sections |
+
 ### Recommended Release Build
 
 Use `build-db` when preparing a DB artifact for colleagues. It runs HTML, release
@@ -354,11 +364,67 @@ Installation PDFs   -> pdf_index.py  -> docs/docs_body/docs_fts
 MCP tool call       -> server.py     -> search.py -> SQLite FTS5
 ```
 
-Core files:
+The important design choice is that the MCP server is read-only. All expensive
+or risky work happens before runtime during DB construction. At runtime the MCP
+process validates the DB metadata, opens SQLite connections, and serves search
+or document lookups.
+
+### Runtime Data Model
+
+Each indexed section is represented once in metadata tables and once in the FTS
+index:
+
+| Table | Purpose |
+|---|---|
+| `docs` | Section metadata: product, book, source path, page title, section title, hierarchy, and character length |
+| `docs_body` | Full section body, joined by `docs.id` when `get_document` needs complete text |
+| `docs_fts` | SQLite FTS5 virtual table used by `search_docs` with weighted BM25 ranking |
+| `metadata` | Schema compatibility values checked by the server and `validate-db` |
+| `build_manifest` | Release artifact provenance: source paths, parsed counts, failure counts, and sidecar hash filename |
+
+Search results are intentionally small: `search_docs` returns metadata,
+highlighted snippets, and a `doc_id`. The client can then call `get_document`
+with that `doc_id` to load the full body only when it is actually needed.
+
+### Source Indexing Pipeline
+
+The release build uses `src/nokia_docs/build.py` as the orchestrator:
+
+1. `index_cmd` creates a fresh DB and indexes WebHelp HTML with `--reset`.
+2. `index_release_notes` appends release-note CSV/JSON rows into the same DB.
+3. `index_pdfs` appends installation-guide PDF sections into the same DB.
+4. `write_sha256_sidecar` writes `nokia_docs.db.sha256`.
+5. `validate_db_file` checks schema compatibility and table consistency.
+
+Strict mode is the default for `build-db`. If any source family reports missing
+inputs, parse failures, write failures, or failed PDFs, the build stops instead
+of producing a partial artifact.
+
+### Search Pipeline
+
+When an MCP client calls `search_docs`:
+
+1. `server.py` receives the FastMCP tool call.
+2. `products.py` resolves aliases such as `sros`, `srl`, `ixr`, `rn`, or
+   `install` into canonical product slugs.
+3. `search.py` sanitizes natural-language text into an FTS5 query. Plain
+   multi-word input becomes a phrase query plus prefix-matched terms for better
+   recall.
+4. SQLite FTS5 searches `docs_fts`, joins to `docs`, applies optional product
+   and book filters, and orders by BM25 score.
+5. `server.py` serializes dataclass results into MCP-friendly dictionaries.
+
+`get_document` uses the same DB connection but joins `docs` with `docs_body` to
+return the full section body. With `include_neighbors=true`, it also returns
+nearby sections from the same source page to help an LLM understand context.
+
+### File Map
 
 | File | Purpose |
 |---|---|
+| `pyproject.toml` | Package metadata, console script registration, runtime dependencies, and Ruff settings |
 | `src/nokia_docs/cli.py` | CLI entrypoint and command registration |
+| `src/nokia_docs/build.py` | One-shot release build orchestration, artifact validation, and `.sha256` sidecar generation |
 | `src/nokia_docs/server.py` | FastMCP server and tool definitions |
 | `src/nokia_docs/search.py` | Query sanitizing, alias resolution, BM25 search, document retrieval |
 | `src/nokia_docs/index.py` | HTML WebHelp indexer |
@@ -366,9 +432,54 @@ Core files:
 | `src/nokia_docs/parse_pdf.py` | PDF section extraction and de-duplication helpers |
 | `src/nokia_docs/pdf_index.py` | PDF indexing and re-indexing commands |
 | `src/nokia_docs/rn.py` | Release-note CSV/JSON indexing and re-indexing commands |
+| `src/nokia_docs/products.py` | Canonical product registry, display names, and aliases |
 | `src/nokia_docs/db.py` | Shared SQLite schema, insert, and delete helpers |
 | `src/nokia_docs/schema.sql` | SQLite tables and FTS5 schema |
+| `index_pdf.py`, `reindex_pdf.py`, `index_rn.py`, `reindex_rn.py` | Backward-compatible wrappers around package CLI functions |
 | `tests/` | Unit and regression tests |
+| `.github/workflows/ci.yml` | GitHub Actions lint, compile, and test workflow |
+
+### Module Responsibilities
+
+`cli.py` is intentionally thin. It wires Click commands together and delegates
+real work to modules that can also be tested directly.
+
+`db.py` owns all schema-sensitive operations. Indexers do not write raw SQL for
+the common insert path; they pass normalized records to `insert_records`, which
+keeps `docs`, `docs_body`, and `docs_fts` synchronized in one transaction.
+
+`index.py` and `parse.py` handle WebHelp. `index.py` discovers HTML files,
+parallelizes parsing, reports progress, records failures, and performs FTS
+optimization. `parse.py` turns each HTML page into normalized section records.
+
+`rn.py` treats release notes as structured data. It reads expected `rn_*.csv`
+and `rn_eol.json` files, maps product/version/category metadata into normalized
+records, and can replace only release-note product lines during re-indexing.
+
+`parse_pdf.py` contains PDF-specific parsing rules, title cleanup, chunking, and
+document-number/issue extraction. `pdf_index.py` owns the DB write flow and
+keeps only the newest issue for duplicate installation-guide PDFs.
+
+`search.py` is the retrieval layer. It hides SQLite details from the MCP server
+and returns typed `Hit`, `Document`, and `ProductInfo` objects.
+
+`server.py` is the only MCP-facing layer. It validates `NOKIA_DOCS_DB`, checks
+schema metadata, keeps per-thread read-only SQLite connections, and exposes the
+three tools: `search_docs`, `get_document`, and `list_products`.
+
+### Extending The Index
+
+To add a new product or source family:
+
+1. Add the canonical product slug, display name, and aliases in `products.py`.
+2. Normalize source content into records with the same fields used by
+   `insert_records`.
+3. Add or update a targeted indexer module for that source type.
+4. Record useful counts in `build_manifest` during release builds.
+5. Add tests for parser behavior, indexing behavior, and search/filter behavior.
+
+This keeps the MCP contract stable even as new Nokia document families are
+added behind it.
 
 The MCP server opens read-only SQLite connections with one connection per thread.
 This keeps concurrent tool calls safe while avoiding any write access during

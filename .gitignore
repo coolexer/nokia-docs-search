@@ -17,6 +17,7 @@ env/
 *.db
 *.db-shm
 *.db-wal
+*.db.sha256
 *.sqlite
 *.sqlite3
 rn_*.csv
