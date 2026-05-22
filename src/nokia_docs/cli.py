@@ -1,6 +1,7 @@
 """Click CLI entrypoint: nokia-docs <command>"""
 import click
 
+from nokia_docs.build import build_db_cmd
 from nokia_docs.db import read_build_manifest, validate_database, validate_metadata
 from nokia_docs.index import index_cmd
 from nokia_docs.pdf_index import index_pdfs, reindex_pdfs
@@ -14,6 +15,7 @@ def main():
 
 
 main.add_command(index_cmd, name="index")
+main.add_command(build_db_cmd, name="build-db")
 
 
 @main.command("index-rn")

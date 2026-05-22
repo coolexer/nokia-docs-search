@@ -86,7 +86,30 @@ Do not commit generated database files to GitHub:
 
 ## Build The Database
 
-### 1. Index WebHelp HTML Documentation
+### Recommended Release Build
+
+Use `build-db` when preparing a DB artifact for colleagues. It runs HTML, release
+note, and PDF indexing; validates the finished DB; writes a `.sha256` sidecar;
+and records source paths/counts in `build_manifest`.
+
+```bash
+nokia-docs build-db \
+  --html-root /path/to/nokia-webhelp-root \
+  --rn-dir /path/to/release-note-files \
+  --pdf-dir /path/to/chassis-installation-guides \
+  --output nokia_docs.db \
+  --workers 8 \
+  --strict
+```
+
+Distribute both files:
+
+- `nokia_docs.db`
+- `nokia_docs.db.sha256`
+
+Use `--no-strict` only for local experiments with incomplete fixture data.
+
+### Manual Step 1: Index WebHelp HTML Documentation
 
 Point the indexer at a local Nokia WebHelp export. The command walks HTML files,
 parses documentation sections, and writes them into a SQLite FTS5 database.
@@ -111,7 +134,7 @@ nokia-docs index /path/to/nokia-docs-root -o nokia_docs.db
 nokia-docs index /path/to/nokia-docs-root -o nokia_docs.db --workers 4
 ```
 
-### 2. Index Release Notes
+### Manual Step 2: Index Release Notes
 
 Release notes are expected as CSV/JSON files in a local directory:
 
@@ -147,19 +170,7 @@ python index_rn.py --db nokia_docs.db --rn-dir /path/to/release-note-files
 python reindex_rn.py nokia_docs.db --rn-dir /path/to/release-note-files
 ```
 
-### 4. Validate The Database Artifact
-
-Before distributing a rebuilt database, validate schema metadata and table
-consistency:
-
-```bash
-nokia-docs validate-db --db nokia_docs.db
-```
-
-The command checks schema compatibility plus `docs`, `docs_body`, and `docs_fts`
-row consistency.
-
-### 3. Index Chassis Installation Guide PDFs
+### Manual Step 3: Index Chassis Installation Guide PDFs
 
 The PDF indexer de-duplicates files by Nokia document number and keeps the
 highest issue number before parsing.
@@ -192,6 +203,18 @@ Compatibility wrappers:
 python index_pdf.py --db nokia_docs.db --pdf-dir /path/to/chassis-installation-guides
 python reindex_pdf.py nokia_docs.db /path/to/chassis-installation-guides --fail-on-error
 ```
+
+### Manual Step 4: Validate The Database Artifact
+
+Before distributing a rebuilt database, validate schema metadata and table
+consistency:
+
+```bash
+nokia-docs validate-db --db nokia_docs.db
+```
+
+The command checks schema compatibility plus `docs`, `docs_body`, and `docs_fts`
+row consistency.
 
 ## Run The MCP Server
 
