@@ -186,6 +186,10 @@ def test_split_standard_text_extracts_bare_reference_only_cells():
         ("IEEE 1588-2008", "IEEE 1588-2008", ""),
         ("3GPP TS 29.244", "3GPP TS 29.244", ""),
         ("draft-ietf-lsr-isis-area-proxy", "draft-ietf-lsr-isis-area-proxy", ""),
+        ("RFC 4760, RFC 7606", "RFC 4760, RFC 7606", ""),
+        ("IETF RFC 4364, RFC 8277", "IETF RFC 4364, RFC 8277", ""),
+        ("IEEE 802.1ag-2007", "IEEE 802.1ag-2007", ""),
+        ("IEEE 802.1X-2010", "IEEE 802.1X-2010", ""),
     ]
 
     for standard_text, expected_ref, expected_title in cases:

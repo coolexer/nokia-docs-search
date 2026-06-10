@@ -103,11 +103,19 @@ def split_standard_text(text: str) -> tuple[str, str]:
     if parenthesized_title:
         return parenthesized_title.group(1).strip(), parenthesized_title.group(2).strip()
 
+    compound_rfc_list = re.match(
+        r"^((?:IETF\s+)?RFC\s+\d+(?:\s*,\s*RFC\s+\d+)+)(?:\s*,\s*(.*))?$",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if compound_rfc_list:
+        return compound_rfc_list.group(1).strip(), (compound_rfc_list.group(2) or "").strip()
+
     patterns = [
         r"^(RFC\s+\d+(?:\s*,\s*RFC\s+\d+)*)\s*,\s*(.*)$",
         r"^(RFC\s+\d+(?:\s*/\s*RFC\s+\d+)*)\s*,\s*(.*)$",
         r"^(IETF\s+RFC\s+\d+(?:\s*/\s*RFC\s+\d+)*)\s*,\s*(.*)$",
-        r"^(IEEE\s+\d+(?:[.\-]\d+)*[A-Za-z]*)\s*,\s*(.*)$",
+        r"^(IEEE\s+\d+(?:\.[A-Za-z0-9]+)*(?:-\d+)?[A-Za-z]*)\s*,\s*(.*)$",
         r"^(3GPP\s+TS\s+\d+(?:\.\d+)*)\s*,\s*(.*)$",
         r"^((?:draft|RFC|ITU-T|MEF|BBF|AF|GR|IETF|ISO|IEC|3GPP)[^,]+)\s*,\s*(.*)$",
     ]
@@ -118,7 +126,7 @@ def split_standard_text(text: str) -> tuple[str, str]:
     bare_reference_patterns = [
         r"^RFC\s+\d+(?:\s*/\s*RFC\s+\d+)*$",
         r"^IETF\s+RFC\s+\d+(?:\s*/\s*RFC\s+\d+)*$",
-        r"^IEEE\s+\d+(?:[.\-]\d+)*[A-Za-z]*$",
+        r"^IEEE\s+\d+(?:\.[A-Za-z0-9]+)*(?:-\d+)?[A-Za-z]*$",
         r"^ITU-T\s+[A-Z]\.\d+(?:\.\d+)*$",
         r"^3GPP\s+TS\s+\d+(?:\.\d+)*$",
         r"^3GPP\s+Release\s+\d+$",
