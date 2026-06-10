@@ -8,8 +8,10 @@ from nokia_docs.db import insert_records, open_write_db
 from nokia_docs.search import search_docs
 from nokia_docs.standards import (
     index_standards,
+    list_standards_products,
     parse_standards_workbook,
     reindex_standards,
+    search_standards,
     split_standard_text,
 )
 
@@ -270,6 +272,72 @@ def test_index_standards_writes_structured_and_docs_fts_rows(tmp_path: Path):
         conn.close()
 
     assert [hit.section_title for hit in hits] == ["RFC 5880"]
+
+
+def test_search_standards_filters_by_status_platform_release_and_group(tmp_path: Path):
+    workbook = _save_workbook(
+        tmp_path / "sros.xlsx",
+        "SR OS 26.3.R1 Standards",
+        [
+            ["Group Title", "7250 IXR Standards", "7705 SAR Gen 2 Standards"],
+            [
+                "Bidirectional Forwarding Detection (BFD)",
+                "RFC 5880, Bidirectional Forwarding Detection (BFD)",
+                "Not Supported",
+            ],
+            [
+                "Border Gateway Protocol (BGP)",
+                "RFC 1997, BGP Communities Attribute",
+                "Not Supported",
+            ],
+        ],
+    )
+    db_path = tmp_path / "nokia_docs.db"
+    index_standards(db_path, [workbook])
+
+    conn = sqlite3.connect(db_path)
+    try:
+        hits = search_standards(
+            conn,
+            query="RFC 5880",
+            product_line="sros-standards",
+            platform="7250",
+            release="26.3.R1",
+            group="BFD",
+            support_status="supported",
+        )
+    finally:
+        conn.close()
+
+    assert len(hits) == 1
+    assert hits[0].standard_ref == "RFC 5880"
+    assert hits[0].platform == "7250 IXR"
+
+
+def test_list_standards_products_returns_summary(tmp_path: Path):
+    workbook = _save_workbook(
+        tmp_path / "srlinux.xlsx",
+        "SR Linux 26.3.1 Standards",
+        [
+            ["Group Title", "SR Linux Standards"],
+            ["Border Gateway Protocol (BGP)", "RFC 1997, BGP Communities Attribute"],
+        ],
+    )
+    db_path = tmp_path / "nokia_docs.db"
+    index_standards(db_path, [workbook])
+
+    conn = sqlite3.connect(db_path)
+    try:
+        products = list_standards_products(conn)
+    finally:
+        conn.close()
+
+    assert len(products) == 1
+    assert products[0].product_line == "srlinux-standards"
+    assert products[0].platforms == ["SR Linux"]
+    assert products[0].releases == ["26.3.1"]
+    assert products[0].num_records == 1
+    assert products[0].source_names == ["srlinux.xlsx"]
 
 
 def test_reindex_standards_removes_only_standards_rows(tmp_path: Path):

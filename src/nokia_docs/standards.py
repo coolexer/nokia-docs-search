@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -77,8 +78,48 @@ class _StagedStandardsFile:
     records: list[StandardsRecord]
 
 
+_STANDARDS_BM25_WEIGHTS = "4.0, 4.0, 3.0, 5.0, 10.0, 6.0, 1.0"
+
+
 def _normalize_text(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _has_standards_tables(conn) -> bool:
+    table_names = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'virtual table')"
+        ).fetchall()
+    }
+    return {"standards", "standards_sources", "standards_fts"}.issubset(table_names)
+
+
+def _like_param(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _sanitize_fts_query(query: str | None) -> str:
+    if query is None:
+        return ""
+
+    query = query.strip()
+    if not query:
+        return ""
+
+    if re.search(r"\b(AND|OR|NOT|NEAR)\b", query) or any(op in query for op in (" + ", "*")):
+        return query
+
+    if query.startswith('"') and query.endswith('"'):
+        return query
+
+    quoted: list[str] = []
+    bare = re.sub(r'"[^"]*"', lambda m: (quoted.append(m.group()) or ""), query)
+    bare = bare.replace('"', "")
+    words = [w for w in re.split(r"\s+", bare.strip()) if w]
+    parts = [*quoted, *(f'"{word}"*' for word in words)]
+    return " AND ".join(parts)
 
 
 def _normalize_platform(header: str) -> str:
@@ -255,6 +296,161 @@ def _docs_record(record: StandardsRecord) -> dict:
         "char_len": len(body),
         "body": body,
     }
+
+
+def search_standards(
+    conn,
+    query: str | None = None,
+    product_line: str | None = None,
+    platform: str | None = None,
+    release: str | None = None,
+    group: str | None = None,
+    support_status: str | None = None,
+    top_k: int = 20,
+) -> list[StandardsHit]:
+    """Search structured standards compliance records."""
+    if not _has_standards_tables(conn):
+        return []
+
+    top_k = max(1, min(top_k, 100))
+    fts_query = _sanitize_fts_query(query)
+    params: list[object] = []
+    where: list[str] = []
+
+    if fts_query:
+        from_sql = """
+            standards_fts
+            JOIN standards s ON standards_fts.rowid = s.id
+            JOIN standards_sources src ON src.id = s.source_id
+        """
+        select_score = f"bm25(standards_fts, {_STANDARDS_BM25_WEIGHTS}) AS score"
+        where.append("standards_fts MATCH ?")
+        params.append(fts_query)
+        order_sql = "ORDER BY score"
+    else:
+        from_sql = "standards s JOIN standards_sources src ON src.id = s.source_id"
+        select_score = "0.0 AS score"
+        order_sql = "ORDER BY s.release DESC, s.platform, s.group_title, s.standard_ref"
+
+    if product_line:
+        where.append("s.product_line = ?")
+        params.append(product_line)
+    if platform:
+        where.append("s.platform LIKE ? ESCAPE '\\'")
+        params.append(_like_param(platform))
+    if release:
+        where.append("s.release = ?")
+        params.append(release)
+    if group:
+        where.append("s.group_title LIKE ? ESCAPE '\\'")
+        params.append(_like_param(group))
+    if support_status:
+        where.append("s.support_status = ?")
+        params.append(support_status)
+
+    where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+    params.append(top_k)
+    sql = f"""
+        SELECT
+            s.id,
+            s.product_line,
+            s.platform,
+            s.release,
+            s.group_title,
+            s.standard_ref,
+            s.standard_title,
+            s.standard_text,
+            s.support_status,
+            src.source_name,
+            s.sheet_name,
+            s.row_number,
+            {select_score}
+        FROM {from_sql}
+        {where_sql}
+        {order_sql}
+        LIMIT ?
+    """
+
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    return [
+        StandardsHit(
+            id=row[0],
+            product_line=row[1],
+            platform=row[2],
+            release=row[3],
+            group_title=row[4],
+            standard_ref=row[5],
+            standard_title=row[6],
+            standard_text=row[7],
+            support_status=row[8],
+            source_name=row[9],
+            sheet_name=row[10],
+            row_number=row[11],
+            score=-(row[12] or 0.0),
+        )
+        for row in rows
+    ]
+
+
+def list_standards_products(conn) -> list[StandardsProductInfo]:
+    """List indexed standards product lines with coverage summaries."""
+    if not _has_standards_tables(conn):
+        return []
+
+    rows = conn.execute(
+        """SELECT product_line, COUNT(*) AS num_records
+           FROM standards
+           GROUP BY product_line
+           ORDER BY product_line"""
+    ).fetchall()
+
+    products: list[StandardsProductInfo] = []
+    for product_line, num_records in rows:
+        platforms = [
+            row[0]
+            for row in conn.execute(
+                """SELECT DISTINCT platform
+                   FROM standards
+                   WHERE product_line = ?
+                   ORDER BY platform""",
+                (product_line,),
+            ).fetchall()
+        ]
+        releases = [
+            row[0]
+            for row in conn.execute(
+                """SELECT DISTINCT release
+                   FROM standards
+                   WHERE product_line = ?
+                   ORDER BY release""",
+                (product_line,),
+            ).fetchall()
+        ]
+        source_names = [
+            row[0]
+            for row in conn.execute(
+                """SELECT DISTINCT src.source_name
+                   FROM standards s
+                   JOIN standards_sources src ON src.id = s.source_id
+                   WHERE s.product_line = ?
+                   ORDER BY src.source_name""",
+                (product_line,),
+            ).fetchall()
+        ]
+        products.append(
+            StandardsProductInfo(
+                product_line=product_line,
+                platforms=platforms,
+                releases=releases,
+                num_records=num_records,
+                source_names=source_names,
+            )
+        )
+    return products
 
 
 def _insert_standards_records(
