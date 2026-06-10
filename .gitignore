@@ -12,6 +12,7 @@ dist/
 .venv/
 venv/
 env/
+.worktrees/
 
 # Local Nokia documentation indexes and downloaded source data
 *.db
