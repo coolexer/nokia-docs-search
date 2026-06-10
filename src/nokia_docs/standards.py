@@ -99,10 +99,15 @@ def _extract_release(sheet_name: str) -> str:
 
 def split_standard_text(text: str) -> tuple[str, str]:
     normalized = _normalize_text(text).replace("{", "").replace("}", "")
+    parenthesized_title = re.match(r"^(3GPP\s+Release\s+\d+)\s+\((.*)\)$", normalized)
+    if parenthesized_title:
+        return parenthesized_title.group(1).strip(), parenthesized_title.group(2).strip()
+
     patterns = [
+        r"^(RFC\s+\d+(?:\s*,\s*RFC\s+\d+)*)\s*,\s*(.*)$",
         r"^(RFC\s+\d+(?:\s*/\s*RFC\s+\d+)*)\s*,\s*(.*)$",
         r"^(IETF\s+RFC\s+\d+(?:\s*/\s*RFC\s+\d+)*)\s*,\s*(.*)$",
-        r"^(IEEE\s+\d+(?:\.\d+)*[A-Za-z]*)\s*,\s*(.*)$",
+        r"^(IEEE\s+\d+(?:[.\-]\d+)*[A-Za-z]*)\s*,\s*(.*)$",
         r"^(3GPP\s+TS\s+\d+(?:\.\d+)*)\s*,\s*(.*)$",
         r"^((?:draft|RFC|ITU-T|MEF|BBF|AF|GR|IETF|ISO|IEC|3GPP)[^,]+)\s*,\s*(.*)$",
     ]
@@ -127,6 +132,8 @@ def parse_standards_workbook(
                 continue
             release = _extract_release(sheet.title)
             if not release:
+                continue
+            if _normalize_text(headers[0] if headers else "") != "Group Title":
                 continue
             product_line = _infer_product(sheet.title, product)
             platform_columns: list[tuple[int, str]] = []

@@ -114,12 +114,32 @@ def test_parse_skips_non_standards_sheets(tmp_path: Path):
     assert records[0].release == "26.3.R1"
 
 
+def test_parse_skips_standards_sheet_without_group_title_header(tmp_path: Path):
+    workbook = _save_workbook(
+        tmp_path / "bad-header.xlsx",
+        "SR OS 26.3.R1 Standards",
+        [
+            ["Not Group Title", "7250 IXR Standards"],
+            ["Bidirectional Forwarding Detection", "RFC 5880, BFD"],
+        ],
+    )
+
+    records = parse_standards_workbook(workbook)
+
+    assert records == []
+
+
 def test_split_standard_text_preserves_plausible_reference_prefixes():
     cases = [
         (
             "IEEE 802.1Q, Bridges and Bridged Networks",
             "IEEE 802.1Q",
             "Bridges and Bridged Networks",
+        ),
+        (
+            "IEEE 1588-2008, Precision Clock Synchronization Protocol",
+            "IEEE 1588-2008",
+            "Precision Clock Synchronization Protocol",
         ),
         (
             "IETF RFC 4364, BGP/MPLS IP VPNs",
@@ -135,6 +155,16 @@ def test_split_standard_text_preserves_plausible_reference_prefixes():
             "RFC 5880/RFC 5881, BFD bundle",
             "RFC 5880/RFC 5881",
             "BFD bundle",
+        ),
+        (
+            "RFC 4760, RFC 7606, Multiprotocol Extensions for BGP-4",
+            "RFC 4760, RFC 7606",
+            "Multiprotocol Extensions for BGP-4",
+        ),
+        (
+            "3GPP Release 12 (ADC rules over Gx interfaces)",
+            "3GPP Release 12",
+            "ADC rules over Gx interfaces",
         ),
     ]
 
