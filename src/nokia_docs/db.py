@@ -108,6 +108,30 @@ def validate_database(conn: sqlite3.Connection) -> list[str]:
     if orphan_fts:
         errors.append(f"orphan docs_fts rows: {orphan_fts}")
 
+    standards_tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table', 'virtual table')"
+        ).fetchall()
+    }
+    if {"standards", "standards_fts"}.issubset(standards_tables):
+        standards_count = conn.execute("SELECT COUNT(*) FROM standards").fetchone()[0]
+        standards_fts_count = conn.execute("SELECT COUNT(*) FROM standards_fts").fetchone()[0]
+        if standards_count != standards_fts_count:
+            errors.append(
+                "standards/standards_fts row count mismatch: "
+                f"standards={standards_count}, standards_fts={standards_fts_count}"
+            )
+
+        orphan_standards_fts = conn.execute(
+            """SELECT COUNT(*)
+               FROM standards_fts f
+               LEFT JOIN standards s ON s.id = f.rowid
+               WHERE s.id IS NULL"""
+        ).fetchone()[0]
+        if orphan_standards_fts:
+            errors.append(f"orphan standards_fts rows: {orphan_standards_fts}")
+
     return errors
 
 

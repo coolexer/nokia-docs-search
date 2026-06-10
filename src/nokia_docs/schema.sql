@@ -47,3 +47,44 @@ CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
     body,
     tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.'"
 );
+
+CREATE TABLE IF NOT EXISTS standards_sources (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_path    TEXT NOT NULL,
+    source_name    TEXT NOT NULL,
+    source_sha256  TEXT NOT NULL,
+    indexed_utc    TEXT NOT NULL,
+    UNIQUE(source_path, source_sha256)
+);
+
+CREATE TABLE IF NOT EXISTS standards (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id       INTEGER NOT NULL REFERENCES standards_sources(id) ON DELETE CASCADE,
+    product_line    TEXT NOT NULL,
+    platform        TEXT NOT NULL,
+    release         TEXT NOT NULL,
+    group_title     TEXT NOT NULL,
+    standard_ref    TEXT NOT NULL DEFAULT '',
+    standard_title  TEXT NOT NULL DEFAULT '',
+    standard_text   TEXT NOT NULL,
+    support_status  TEXT NOT NULL,
+    sheet_name      TEXT NOT NULL,
+    row_number      INTEGER NOT NULL,
+    UNIQUE(product_line, platform, release, group_title, standard_text, sheet_name, row_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_standards_product ON standards(product_line);
+CREATE INDEX IF NOT EXISTS idx_standards_filters
+    ON standards(product_line, platform, release, support_status);
+CREATE INDEX IF NOT EXISTS idx_standards_ref ON standards(standard_ref);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS standards_fts USING fts5(
+    product_line,
+    platform,
+    release,
+    group_title,
+    standard_ref,
+    standard_title,
+    standard_text,
+    tokenize = "unicode61 remove_diacritics 2 tokenchars '-_.'"
+);
