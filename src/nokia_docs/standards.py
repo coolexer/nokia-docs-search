@@ -13,7 +13,6 @@ import openpyxl
 
 from nokia_docs.db import (
     delete_standards_product_lines,
-    insert_records,
     open_write_db,
     record_build_manifest,
 )
@@ -69,6 +68,13 @@ class StandardsProductInfo:
     releases: list[str]
     num_records: int
     source_names: list[str]
+
+
+@dataclass(frozen=True)
+class _StagedStandardsFile:
+    path: Path
+    source_sha256: str
+    records: list[StandardsRecord]
 
 
 def _normalize_text(value: object) -> str:
@@ -257,17 +263,36 @@ def _insert_standards_records(
     records: list[StandardsRecord],
 ) -> int:
     inserted = 0
-    conn.execute("BEGIN")
-    try:
-        for record in records:
-            cur = conn.execute(
-                """INSERT OR IGNORE INTO standards
-                   (source_id, product_line, platform, release, group_title,
-                    standard_ref, standard_title, standard_text, support_status,
-                    sheet_name, row_number)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+    for record in records:
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO standards
+               (source_id, product_line, platform, release, group_title,
+                standard_ref, standard_title, standard_text, support_status,
+                sheet_name, row_number)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                source_id,
+                record.product_line,
+                record.platform,
+                record.release,
+                record.group_title,
+                record.standard_ref,
+                record.standard_title,
+                record.standard_text,
+                record.support_status,
+                record.sheet_name,
+                record.row_number,
+            ),
+        )
+        if cur.lastrowid and cur.rowcount:
+            standard_id = cur.lastrowid
+            conn.execute(
+                """INSERT INTO standards_fts
+                   (rowid, product_line, platform, release, group_title,
+                    standard_ref, standard_title, standard_text)
+                   VALUES (?,?,?,?,?,?,?,?)""",
                 (
-                    source_id,
+                    standard_id,
                     record.product_line,
                     record.platform,
                     record.release,
@@ -275,35 +300,51 @@ def _insert_standards_records(
                     record.standard_ref,
                     record.standard_title,
                     record.standard_text,
-                    record.support_status,
-                    record.sheet_name,
-                    record.row_number,
                 ),
             )
-            if cur.lastrowid and cur.rowcount:
-                standard_id = cur.lastrowid
-                conn.execute(
-                    """INSERT INTO standards_fts
-                       (rowid, product_line, platform, release, group_title,
-                        standard_ref, standard_title, standard_text)
-                       VALUES (?,?,?,?,?,?,?,?)""",
-                    (
-                        standard_id,
-                        record.product_line,
-                        record.platform,
-                        record.release,
-                        record.group_title,
-                        record.standard_ref,
-                        record.standard_title,
-                        record.standard_text,
-                    ),
-                )
-                inserted += 1
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
-    else:
-        conn.execute("COMMIT")
+            inserted += 1
+    return inserted
+
+
+def _insert_docs_records(conn, rows: list[dict]) -> int:
+    inserted = 0
+    for row in rows:
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO docs
+               (product_line, book, rel_path, page_title, section_id,
+                section_title, section_path, depth, char_len)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                row["product_line"],
+                row["book"],
+                row["rel_path"],
+                row["page_title"],
+                row["section_id"],
+                row["section_title"],
+                row["section_path"],
+                row["depth"],
+                row["char_len"],
+            ),
+        )
+        if cur.lastrowid and cur.rowcount:
+            doc_id = cur.lastrowid
+            conn.execute(
+                "INSERT OR IGNORE INTO docs_body (id, body) VALUES (?,?)",
+                (doc_id, row["body"]),
+            )
+            conn.execute(
+                """INSERT INTO docs_fts
+                   (rowid, section_title, page_title, section_path, body)
+                   VALUES (?,?,?,?,?)""",
+                (
+                    doc_id,
+                    row["section_title"],
+                    row["page_title"],
+                    row["section_path"],
+                    row["body"],
+                ),
+            )
+            inserted += 1
     return inserted
 
 
@@ -321,8 +362,53 @@ def _standards_source_id(conn, source_path: Path, source_sha256: str) -> int:
            WHERE source_path = ? AND source_sha256 = ?""",
         (resolved_path, source_sha256),
     ).fetchone()
-    conn.commit()
     return int(row[0])
+
+
+def _stage_standards_files(
+    standards_files: list[Path],
+    product: str | None = None,
+) -> list[_StagedStandardsFile]:
+    return [
+        _StagedStandardsFile(
+            path=Path(path),
+            source_sha256=sha256_file(Path(path)),
+            records=parse_standards_workbook(Path(path), product=product),
+        )
+        for path in standards_files
+    ]
+
+
+def _write_staged_standards(
+    conn,
+    staged_files: list[_StagedStandardsFile],
+    product_lines_to_delete: list[str] | None = None,
+) -> tuple[int, dict[str, int]]:
+    total = 0
+    source_counts: dict[str, int] = {}
+    conn.execute("BEGIN")
+    try:
+        if product_lines_to_delete is not None:
+            delete_standards_product_lines(conn, product_lines_to_delete)
+        for staged in staged_files:
+            source_id = _standards_source_id(conn, staged.path, staged.source_sha256)
+            source_counts[staged.path.name] = len(staged.records)
+            total += _insert_standards_records(conn, source_id, staged.records)
+            supported_docs = [
+                _docs_record(record)
+                for record in staged.records
+                if record.support_status == "supported"
+            ]
+            _insert_docs_records(conn, supported_docs)
+
+        conn.execute("INSERT INTO standards_fts(standards_fts) VALUES('optimize')")
+        conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
+    return total, source_counts
 
 
 def index_standards(
@@ -336,26 +422,11 @@ def index_standards(
 
     db_path = Path(db_path)
     files = [Path(path) for path in standards_files]
-    conn = open_write_db(db_path)
-    total = 0
-    source_counts: dict[str, int] = {}
     t0 = time.monotonic()
+    staged_files = _stage_standards_files(files, product=product)
+    conn = open_write_db(db_path)
     try:
-        for workbook in files:
-            source_id = _standards_source_id(conn, workbook, sha256_file(workbook))
-            records = parse_standards_workbook(workbook, product=product)
-            source_counts[workbook.name] = len(records)
-            total += _insert_standards_records(conn, source_id, records)
-            supported_docs = [
-                _docs_record(record)
-                for record in records
-                if record.support_status == "supported"
-            ]
-            insert_records(conn, supported_docs)
-
-        conn.execute("INSERT INTO standards_fts(standards_fts) VALUES('optimize')")
-        conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
-        conn.commit()
+        total, source_counts = _write_staged_standards(conn, staged_files)
         record_build_manifest(
             conn,
             {
@@ -383,13 +454,37 @@ def reindex_standards(
 ) -> StandardsIndexReport:
     """Remove existing standards rows and index them again."""
     db_path = Path(db_path)
+    if product and len(standards_files) > 1:
+        raise click.ClickException("--product can only be used with one standards workbook.")
     if product:
         product_lines = [_infer_product("", product)]
     else:
         product_lines = STANDARDS_PRODUCT_LINES
+    files = [Path(path) for path in standards_files]
+    t0 = time.monotonic()
+    staged_files = _stage_standards_files(files, product=product)
     conn = open_write_db(db_path)
     try:
-        delete_standards_product_lines(conn, product_lines)
+        total, source_counts = _write_staged_standards(
+            conn,
+            staged_files,
+            product_lines_to_delete=product_lines,
+        )
+        record_build_manifest(
+            conn,
+            {
+                "standards_files": len(files),
+                "standards_records_inserted": total,
+                **{f"standards_{key}_records": value for key, value in source_counts.items()},
+            },
+        )
     finally:
         conn.close()
-    return index_standards(db_path, standards_files, product=product)
+
+    elapsed = time.monotonic() - t0
+    return StandardsIndexReport(
+        inserted=total,
+        source_counts=source_counts,
+        elapsed_seconds=elapsed,
+        db_size_mb=db_path.stat().st_size / 1024 / 1024 if db_path.exists() else 0.0,
+    )

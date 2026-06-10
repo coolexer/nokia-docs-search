@@ -228,13 +228,17 @@ def delete_standards_product_lines(conn: sqlite3.Connection, product_lines: list
     doc_ids = [
         r[0]
         for r in conn.execute(
-            f"SELECT id FROM docs WHERE product_line IN ({placeholders})",
+            f"""SELECT id FROM docs
+                WHERE product_line IN ({placeholders})
+                  AND (book = 'standards-compliance' OR rel_path LIKE 'standards/%')""",
             product_lines,
         ).fetchall()
     ]
     deleted = len(standard_ids)
 
-    conn.execute("BEGIN")
+    own_transaction = not conn.in_transaction
+    if own_transaction:
+        conn.execute("BEGIN")
     try:
         if standard_ids:
             standard_placeholders = ",".join("?" * len(standard_ids))
@@ -248,12 +252,20 @@ def delete_standards_product_lines(conn: sqlite3.Connection, product_lines: list
             )
         if doc_ids:
             doc_placeholders = ",".join("?" * len(doc_ids))
-            conn.execute(f"DELETE FROM docs_fts WHERE rowid IN ({doc_placeholders})", doc_ids)
-            conn.execute(f"DELETE FROM docs_body WHERE id IN ({doc_placeholders})", doc_ids)
+            conn.execute(
+                f"DELETE FROM docs_fts WHERE rowid IN ({doc_placeholders})",
+                doc_ids,
+            )
+            conn.execute(
+                f"DELETE FROM docs_body WHERE id IN ({doc_placeholders})",
+                doc_ids,
+            )
             conn.execute(f"DELETE FROM docs WHERE id IN ({doc_placeholders})", doc_ids)
     except Exception:
-        conn.execute("ROLLBACK")
+        if own_transaction:
+            conn.execute("ROLLBACK")
         raise
     else:
-        conn.execute("COMMIT")
+        if own_transaction:
+            conn.execute("COMMIT")
     return deleted

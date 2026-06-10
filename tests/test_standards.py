@@ -2,6 +2,7 @@ import sqlite3
 from pathlib import Path
 
 import openpyxl
+import pytest
 
 from nokia_docs.db import insert_records, open_write_db
 from nokia_docs.search import search_docs
@@ -36,6 +37,26 @@ def _save_workbook_with_sheets(
             ws.append(row)
     wb.save(path)
     return path
+
+
+def _standards_counts(db_path: Path) -> tuple[int, int, int, int]:
+    conn = sqlite3.connect(db_path)
+    try:
+        return (
+            conn.execute("SELECT COUNT(*) FROM standards").fetchone()[0],
+            conn.execute("SELECT COUNT(*) FROM standards_fts").fetchone()[0],
+            conn.execute(
+                """SELECT COUNT(*) FROM docs
+                   WHERE product_line IN ('sros-standards', 'srlinux-standards')"""
+            ).fetchone()[0],
+            conn.execute(
+                """SELECT COUNT(*) FROM docs_fts f
+                   JOIN docs d ON d.id = f.rowid
+                   WHERE d.product_line IN ('sros-standards', 'srlinux-standards')"""
+            ).fetchone()[0],
+        )
+    finally:
+        conn.close()
 
 
 def test_parse_sros_multiplatform_standards(tmp_path: Path):
@@ -229,6 +250,21 @@ def test_index_standards_writes_structured_and_docs_fts_rows(tmp_path: Path):
     try:
         assert conn.execute("SELECT COUNT(*) FROM standards").fetchone()[0] == 2
         assert conn.execute("SELECT COUNT(*) FROM standards_fts").fetchone()[0] == 2
+        assert conn.execute("SELECT COUNT(*) FROM docs WHERE product_line = 'sros-standards'").fetchone()[0] == 1
+        assert (
+            conn.execute(
+                """SELECT COUNT(*) FROM docs_fts
+                   WHERE docs_fts MATCH '"Not Supported"'"""
+            ).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute(
+                """SELECT COUNT(*) FROM standards_fts
+                   WHERE standards_fts MATCH '"Not Supported"'"""
+            ).fetchone()[0]
+            == 1
+        )
         hits = search_docs("RFC 5880", conn, product_line="sros-standards")
     finally:
         conn.close()
@@ -285,3 +321,22 @@ def test_reindex_standards_removes_only_standards_rows(tmp_path: Path):
         assert conn.execute("SELECT COUNT(*) FROM standards").fetchone()[0] == 1
     finally:
         conn.close()
+
+
+def test_reindex_standards_failure_preserves_existing_standards_rows(tmp_path: Path):
+    workbook = _save_workbook(
+        tmp_path / "sros.xlsx",
+        "SR OS 26.3.R1 Standards",
+        [
+            ["Group Title", "7250 IXR Standards"],
+            ["Bidirectional Forwarding Detection (BFD)", "RFC 5880, BFD"],
+        ],
+    )
+    db_path = tmp_path / "nokia_docs.db"
+    index_standards(db_path, [workbook])
+    before_counts = _standards_counts(db_path)
+
+    with pytest.raises(FileNotFoundError):
+        reindex_standards(db_path, [tmp_path / "missing.xlsx"])
+
+    assert _standards_counts(db_path) == before_counts
