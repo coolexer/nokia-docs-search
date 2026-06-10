@@ -2,7 +2,7 @@ from pathlib import Path
 
 import openpyxl
 
-from nokia_docs.standards import parse_standards_workbook
+from nokia_docs.standards import parse_standards_workbook, split_standard_text
 
 
 def _save_workbook(path: Path, title: str, rows: list[list[str | None]]) -> Path:
@@ -11,6 +11,21 @@ def _save_workbook(path: Path, title: str, rows: list[list[str | None]]) -> Path
     ws.title = title
     for row in rows:
         ws.append(row)
+    wb.save(path)
+    return path
+
+
+def _save_workbook_with_sheets(
+    path: Path,
+    sheets: list[tuple[str, list[list[str | None]]]],
+) -> Path:
+    wb = openpyxl.Workbook()
+    default_sheet = wb.active
+    wb.remove(default_sheet)
+    for title, rows in sheets:
+        ws = wb.create_sheet(title=title)
+        for row in rows:
+            ws.append(row)
     wb.save(path)
     return path
 
@@ -69,3 +84,62 @@ def test_parse_srlinux_ignores_blank_trailing_column(tmp_path: Path):
     assert records[0].release == "26.3.1"
     assert records[0].standard_ref == "RFC 1997"
     assert records[0].standard_title == "BGP Communities Attribute"
+
+
+def test_parse_skips_non_standards_sheets(tmp_path: Path):
+    workbook = _save_workbook_with_sheets(
+        tmp_path / "mixed.xlsx",
+        [
+            (
+                "Cover",
+                [
+                    ["Group Title", "7250 IXR Standards"],
+                    ["Cover metadata", "RFC 0000, Should Not Parse"],
+                ],
+            ),
+            (
+                "SR OS 26.3.R1 Standards",
+                [
+                    ["Group Title", "7250 IXR Standards"],
+                    ["Bidirectional Forwarding Detection", "RFC 5880, BFD"],
+                ],
+            ),
+        ],
+    )
+
+    records = parse_standards_workbook(workbook)
+
+    assert len(records) == 1
+    assert records[0].sheet_name == "SR OS 26.3.R1 Standards"
+    assert records[0].release == "26.3.R1"
+
+
+def test_split_standard_text_preserves_plausible_reference_prefixes():
+    cases = [
+        (
+            "IEEE 802.1Q, Bridges and Bridged Networks",
+            "IEEE 802.1Q",
+            "Bridges and Bridged Networks",
+        ),
+        (
+            "IETF RFC 4364, BGP/MPLS IP VPNs",
+            "IETF RFC 4364",
+            "BGP/MPLS IP VPNs",
+        ),
+        (
+            "3GPP TS 29.244, Interface between CP and UP",
+            "3GPP TS 29.244",
+            "Interface between CP and UP",
+        ),
+        (
+            "RFC 5880/RFC 5881, BFD bundle",
+            "RFC 5880/RFC 5881",
+            "BFD bundle",
+        ),
+    ]
+
+    for standard_text, expected_ref, expected_title in cases:
+        standard_ref, standard_title = split_standard_text(standard_text)
+
+        assert standard_ref == expected_ref
+        assert standard_title == expected_title

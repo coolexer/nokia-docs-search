@@ -89,7 +89,7 @@ def _infer_product(sheet_name: str, explicit_product: str | None = None) -> str:
 
 
 def _extract_release(sheet_name: str) -> str:
-    match = re.search(
+    match = re.fullmatch(
         r"(?:SR OS|SR Linux)\s+([0-9][0-9.]*?(?:\.R\d+)?)\s+Standards",
         sheet_name,
         flags=re.IGNORECASE,
@@ -100,8 +100,11 @@ def _extract_release(sheet_name: str) -> str:
 def split_standard_text(text: str) -> tuple[str, str]:
     normalized = _normalize_text(text).replace("{", "").replace("}", "")
     patterns = [
-        r"^(RFC\s+\d+)\s*,?\s*(.*)$",
-        r"^((?:draft|RFC|IEEE|ITU-T|MEF|BBF|AF|GR|IETF|ISO|IEC|3GPP)[^,]*?)\s*,?\s*(.*)$",
+        r"^(RFC\s+\d+(?:\s*/\s*RFC\s+\d+)*)\s*,\s*(.*)$",
+        r"^(IETF\s+RFC\s+\d+(?:\s*/\s*RFC\s+\d+)*)\s*,\s*(.*)$",
+        r"^(IEEE\s+\d+(?:\.\d+)*[A-Za-z]*)\s*,\s*(.*)$",
+        r"^(3GPP\s+TS\s+\d+(?:\.\d+)*)\s*,\s*(.*)$",
+        r"^((?:draft|RFC|ITU-T|MEF|BBF|AF|GR|IETF|ISO|IEC|3GPP)[^,]+)\s*,\s*(.*)$",
     ]
     for pattern in patterns:
         match = re.match(pattern, normalized, flags=re.IGNORECASE)
@@ -122,8 +125,10 @@ def parse_standards_workbook(
             headers = next(rows, None)
             if not headers:
                 continue
-            product_line = _infer_product(sheet.title, product)
             release = _extract_release(sheet.title)
+            if not release:
+                continue
+            product_line = _infer_product(sheet.title, product)
             platform_columns: list[tuple[int, str]] = []
             for idx, header_value in enumerate(headers[1:], start=1):
                 header = _normalize_text(header_value)
