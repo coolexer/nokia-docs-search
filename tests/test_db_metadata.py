@@ -123,6 +123,36 @@ def test_open_write_db_creates_standards_tables(tmp_path):
     assert "standards_fts" in table_names
 
 
+def test_open_write_db_enforces_standards_source_delete_cascade(tmp_path):
+    db_path = tmp_path / "nokia_docs.db"
+    conn = db.open_write_db(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO standards_sources
+               (source_path, source_name, source_sha256, indexed_utc)
+               VALUES ('fixture.xlsx', 'fixture.xlsx', 'abc', '2026-06-09T00:00:00+00:00')"""
+        )
+        source_id = conn.execute("SELECT id FROM standards_sources").fetchone()[0]
+        conn.execute(
+            """INSERT INTO standards
+               (source_id, product_line, platform, release, group_title,
+                standard_ref, standard_title, standard_text, support_status,
+                sheet_name, row_number)
+               VALUES (?, 'sros-standards', '7250 IXR', '26.3.R1', 'BFD',
+                       'RFC 5880', 'Bidirectional Forwarding Detection',
+                       'RFC 5880, Bidirectional Forwarding Detection (BFD)',
+                       'supported', 'SR OS 26.3.R1 Standards', 2)""",
+            (source_id,),
+        )
+
+        conn.execute("DELETE FROM standards_sources WHERE id = ?", (source_id,))
+        standards_count = conn.execute("SELECT COUNT(*) FROM standards").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert standards_count == 0
+
+
 def test_validate_database_reports_standards_fts_mismatch(tmp_path):
     db_path = tmp_path / "broken-standards.db"
     conn = db.open_write_db(db_path)

@@ -18,6 +18,7 @@ def open_write_db(db_path: Path, reset: bool = False) -> sqlite3.Connection:
         db_path.unlink()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, check_same_thread=False)
+    conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA cache_size=-64000")
