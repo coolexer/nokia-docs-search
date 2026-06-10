@@ -182,6 +182,10 @@ def test_split_standard_text_extracts_bare_reference_only_cells():
         ("ITU-T Y.1731", "ITU-T Y.1731", ""),
         ("3GPP Release 12", "3GPP Release 12", ""),
         ("RFC 5880/RFC 5881", "RFC 5880/RFC 5881", ""),
+        ("IEEE 802.1Q", "IEEE 802.1Q", ""),
+        ("IEEE 1588-2008", "IEEE 1588-2008", ""),
+        ("3GPP TS 29.244", "3GPP TS 29.244", ""),
+        ("draft-ietf-lsr-isis-area-proxy", "draft-ietf-lsr-isis-area-proxy", ""),
     ]
 
     for standard_text, expected_ref, expected_title in cases:
