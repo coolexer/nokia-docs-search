@@ -115,6 +115,15 @@ def split_standard_text(text: str) -> tuple[str, str]:
         match = re.match(pattern, normalized, flags=re.IGNORECASE)
         if match:
             return match.group(1).strip(), match.group(2).strip()
+    bare_reference_patterns = [
+        r"^RFC\s+\d+(?:\s*/\s*RFC\s+\d+)*$",
+        r"^IETF\s+RFC\s+\d+(?:\s*/\s*RFC\s+\d+)*$",
+        r"^ITU-T\s+[A-Z]\.\d+(?:\.\d+)*$",
+        r"^3GPP\s+Release\s+\d+$",
+    ]
+    for pattern in bare_reference_patterns:
+        if re.match(pattern, normalized, flags=re.IGNORECASE):
+            return normalized, ""
     return "", normalized
 
 

@@ -173,3 +173,19 @@ def test_split_standard_text_preserves_plausible_reference_prefixes():
 
         assert standard_ref == expected_ref
         assert standard_title == expected_title
+
+
+def test_split_standard_text_extracts_bare_reference_only_cells():
+    cases = [
+        ("RFC 5880", "RFC 5880", ""),
+        ("IETF RFC 4364", "IETF RFC 4364", ""),
+        ("ITU-T Y.1731", "ITU-T Y.1731", ""),
+        ("3GPP Release 12", "3GPP Release 12", ""),
+        ("RFC 5880/RFC 5881", "RFC 5880/RFC 5881", ""),
+    ]
+
+    for standard_text, expected_ref, expected_title in cases:
+        standard_ref, standard_title = split_standard_text(standard_text)
+
+        assert standard_ref == expected_ref
+        assert standard_title == expected_title
