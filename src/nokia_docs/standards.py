@@ -1,11 +1,22 @@
 """Parse Nokia standards compliance spreadsheets."""
 from __future__ import annotations
 
+import hashlib
 import re
+import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
+import click
 import openpyxl
+
+from nokia_docs.db import (
+    delete_standards_product_lines,
+    insert_records,
+    open_write_db,
+    record_build_manifest,
+)
 
 SROS_STANDARDS = "sros-standards"
 SRLINUX_STANDARDS = "srlinux-standards"
@@ -193,3 +204,192 @@ def parse_standards_workbook(
     finally:
         workbook.close()
     return records
+
+
+def sha256_file(path: Path) -> str:
+    """Return the SHA-256 digest for a file."""
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def _docs_record(record: StandardsRecord) -> dict:
+    title = record.standard_ref or record.standard_title or record.standard_text[:80]
+    body = "\n".join(
+        [
+            record.standard_text,
+            "",
+            f"Product: {record.product_line}",
+            f"Platform: {record.platform}",
+            f"Release: {record.release}",
+            f"Group: {record.group_title}",
+            f"Support status: {record.support_status}",
+            f"Source sheet: {record.sheet_name}",
+            f"Source row: {record.row_number}",
+        ]
+    )
+    section_slug = _slug(title) or "standard"
+    platform_slug = _slug(record.platform) or "platform"
+    section_id = f"{platform_slug}-{record.row_number}-{section_slug}"
+    return {
+        "product_line": record.product_line,
+        "book": "standards-compliance",
+        "rel_path": f"standards/{record.product_line}/{record.release}/{record.sheet_name}.xlsx",
+        "page_title": f"{record.product_line} {record.release} Standards Compliance",
+        "section_id": section_id,
+        "section_title": title,
+        "section_path": f"{record.release} > {record.group_title} > {record.platform} > {title}",
+        "depth": 0,
+        "char_len": len(body),
+        "body": body,
+    }
+
+
+def _insert_standards_records(
+    conn,
+    source_id: int,
+    records: list[StandardsRecord],
+) -> int:
+    inserted = 0
+    conn.execute("BEGIN")
+    try:
+        for record in records:
+            cur = conn.execute(
+                """INSERT OR IGNORE INTO standards
+                   (source_id, product_line, platform, release, group_title,
+                    standard_ref, standard_title, standard_text, support_status,
+                    sheet_name, row_number)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    source_id,
+                    record.product_line,
+                    record.platform,
+                    record.release,
+                    record.group_title,
+                    record.standard_ref,
+                    record.standard_title,
+                    record.standard_text,
+                    record.support_status,
+                    record.sheet_name,
+                    record.row_number,
+                ),
+            )
+            if cur.lastrowid and cur.rowcount:
+                standard_id = cur.lastrowid
+                conn.execute(
+                    """INSERT INTO standards_fts
+                       (rowid, product_line, platform, release, group_title,
+                        standard_ref, standard_title, standard_text)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    (
+                        standard_id,
+                        record.product_line,
+                        record.platform,
+                        record.release,
+                        record.group_title,
+                        record.standard_ref,
+                        record.standard_title,
+                        record.standard_text,
+                    ),
+                )
+                inserted += 1
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
+    return inserted
+
+
+def _standards_source_id(conn, source_path: Path, source_sha256: str) -> int:
+    indexed_utc = datetime.now(UTC).isoformat(timespec="seconds")
+    resolved_path = str(source_path.resolve())
+    conn.execute(
+        """INSERT OR IGNORE INTO standards_sources
+           (source_path, source_name, source_sha256, indexed_utc)
+           VALUES (?,?,?,?)""",
+        (resolved_path, source_path.name, source_sha256, indexed_utc),
+    )
+    row = conn.execute(
+        """SELECT id FROM standards_sources
+           WHERE source_path = ? AND source_sha256 = ?""",
+        (resolved_path, source_sha256),
+    ).fetchone()
+    conn.commit()
+    return int(row[0])
+
+
+def index_standards(
+    db_path: Path,
+    standards_files: list[Path],
+    product: str | None = None,
+) -> StandardsIndexReport:
+    """Index standards compliance workbooks into structured and shared docs tables."""
+    if product and len(standards_files) > 1:
+        raise click.ClickException("--product can only be used with one standards workbook.")
+
+    db_path = Path(db_path)
+    files = [Path(path) for path in standards_files]
+    conn = open_write_db(db_path)
+    total = 0
+    source_counts: dict[str, int] = {}
+    t0 = time.monotonic()
+    try:
+        for workbook in files:
+            source_id = _standards_source_id(conn, workbook, sha256_file(workbook))
+            records = parse_standards_workbook(workbook, product=product)
+            source_counts[workbook.name] = len(records)
+            total += _insert_standards_records(conn, source_id, records)
+            supported_docs = [
+                _docs_record(record)
+                for record in records
+                if record.support_status == "supported"
+            ]
+            insert_records(conn, supported_docs)
+
+        conn.execute("INSERT INTO standards_fts(standards_fts) VALUES('optimize')")
+        conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
+        conn.commit()
+        record_build_manifest(
+            conn,
+            {
+                "standards_files": len(files),
+                "standards_records_inserted": total,
+                **{f"standards_{key}_records": value for key, value in source_counts.items()},
+            },
+        )
+    finally:
+        conn.close()
+
+    elapsed = time.monotonic() - t0
+    return StandardsIndexReport(
+        inserted=total,
+        source_counts=source_counts,
+        elapsed_seconds=elapsed,
+        db_size_mb=db_path.stat().st_size / 1024 / 1024 if db_path.exists() else 0.0,
+    )
+
+
+def reindex_standards(
+    db_path: Path,
+    standards_files: list[Path],
+    product: str | None = None,
+) -> StandardsIndexReport:
+    """Remove existing standards rows and index them again."""
+    db_path = Path(db_path)
+    if product:
+        product_lines = [_infer_product("", product)]
+    else:
+        product_lines = STANDARDS_PRODUCT_LINES
+    conn = open_write_db(db_path)
+    try:
+        delete_standards_product_lines(conn, product_lines)
+    finally:
+        conn.close()
+    return index_standards(db_path, standards_files, product=product)

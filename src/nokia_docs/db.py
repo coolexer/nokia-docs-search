@@ -210,3 +210,50 @@ def delete_product_lines(conn: sqlite3.Connection, product_lines: list[str]) -> 
     else:
         conn.execute("COMMIT")
     return len(ids)
+
+
+def delete_standards_product_lines(conn: sqlite3.Connection, product_lines: list[str]) -> int:
+    """Delete standards rows and mirrored docs rows for the given standards product lines."""
+    if not product_lines:
+        return 0
+
+    placeholders = ",".join("?" * len(product_lines))
+    standard_ids = [
+        r[0]
+        for r in conn.execute(
+            f"SELECT id FROM standards WHERE product_line IN ({placeholders})",
+            product_lines,
+        ).fetchall()
+    ]
+    doc_ids = [
+        r[0]
+        for r in conn.execute(
+            f"SELECT id FROM docs WHERE product_line IN ({placeholders})",
+            product_lines,
+        ).fetchall()
+    ]
+    deleted = len(standard_ids)
+
+    conn.execute("BEGIN")
+    try:
+        if standard_ids:
+            standard_placeholders = ",".join("?" * len(standard_ids))
+            conn.execute(
+                f"DELETE FROM standards_fts WHERE rowid IN ({standard_placeholders})",
+                standard_ids,
+            )
+            conn.execute(
+                f"DELETE FROM standards WHERE id IN ({standard_placeholders})",
+                standard_ids,
+            )
+        if doc_ids:
+            doc_placeholders = ",".join("?" * len(doc_ids))
+            conn.execute(f"DELETE FROM docs_fts WHERE rowid IN ({doc_placeholders})", doc_ids)
+            conn.execute(f"DELETE FROM docs_body WHERE id IN ({doc_placeholders})", doc_ids)
+            conn.execute(f"DELETE FROM docs WHERE id IN ({doc_placeholders})", doc_ids)
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
+    return deleted
