@@ -288,7 +288,8 @@ def _run_fts_search(
 def _term_present(term: str, text: str) -> bool:
     normalized_term = term.lower().replace("-", " ")
     normalized_text = text.lower().replace("-", " ")
-    return normalized_term in normalized_text
+    pattern = rf"(?<![A-Za-z0-9.]){re.escape(normalized_term)}(?![A-Za-z0-9.])"
+    return bool(re.search(pattern, normalized_text))
 
 
 def _soft_match_count(hit: Hit, terms: list[str]) -> int:
@@ -358,7 +359,7 @@ def search_docs(
 
         if candidate.match_mode == "soft":
             hits = _rank_soft_hits(hits, candidate.important_terms)
-        elif len(hits) >= enough_hits:
+        elif candidate.match_mode == "strict" and len(hits) >= enough_hits:
             return hits[:top_k]
 
         for hit in hits:

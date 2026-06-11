@@ -3,7 +3,7 @@ from pathlib import Path
 
 from nokia_docs.index import _insert_chunks, _open_db
 from nokia_docs.parse import Chunk
-from nokia_docs.search import _sanitize_query, plan_search_queries, search_docs
+from nokia_docs.search import _sanitize_query, _term_present, plan_search_queries, search_docs
 
 
 def _build_db(tmp_path: Path) -> sqlite3.Connection:
@@ -77,6 +77,50 @@ def _build_db(tmp_path: Path) -> sqlite3.Connection:
                 section_path="Services > VPLS > BGP auto discovery",
                 depth=2,
                 body="BGP AD auto discovery VPLS signaling exchanges service membership.",
+            ),
+            Chunk(
+                product_line="sros-26-3",
+                book="fallback",
+                rel_path="26-3/books/fallback/alpha.html",
+                page_title="Alpha beta strict seed",
+                section_id="alpha-beta-strict",
+                section_title="Alpha beta strict seed",
+                section_path="Fallback > Alpha beta strict seed",
+                depth=2,
+                body="Alpha beta 7250 appears only in this strict seed section.",
+            ),
+            Chunk(
+                product_line="sros-26-3",
+                book="fallback",
+                rel_path="26-3/books/fallback/alpha.html",
+                page_title="Alpha beta relaxed one",
+                section_id="alpha-beta-relaxed-one",
+                section_title="Alpha beta relaxed one",
+                section_path="Fallback > Alpha beta relaxed one",
+                depth=2,
+                body="Alpha beta relaxed result one.",
+            ),
+            Chunk(
+                product_line="sros-26-3",
+                book="fallback",
+                rel_path="26-3/books/fallback/alpha.html",
+                page_title="Alpha beta relaxed two",
+                section_id="alpha-beta-relaxed-two",
+                section_title="Alpha beta relaxed two",
+                section_path="Fallback > Alpha beta relaxed two",
+                depth=2,
+                body="Alpha beta relaxed result two.",
+            ),
+            Chunk(
+                product_line="sros-26-3",
+                book="fallback",
+                rel_path="26-3/books/fallback/alpha.html",
+                page_title="Alpha beta relaxed three",
+                section_id="alpha-beta-relaxed-three",
+                section_title="Alpha beta relaxed three",
+                section_path="Fallback > Alpha beta relaxed three",
+                depth=2,
+                body="Alpha beta relaxed result three.",
             ),
         ],
     )
@@ -168,6 +212,20 @@ def test_short_query_stays_strict(tmp_path):
     assert hits[0].match_mode == "strict"
 
 
+def test_non_strict_fallback_appends_to_partial_strict_results(tmp_path):
+    conn = _build_db(tmp_path)
+    try:
+        hits = search_docs("alpha beta 7250", conn, top_k=5)
+    finally:
+        conn.close()
+
+    assert hits
+    assert hits[0].section_title == "Alpha beta strict seed"
+    assert hits[0].match_mode == "strict"
+    assert len({hit.doc_id for hit in hits}) == len(hits)
+    assert any(hit.match_mode == "relaxed" for hit in hits[1:])
+
+
 def test_plan_search_queries_starts_with_strict_candidate():
     candidates = plan_search_queries("boundary clock")
 
@@ -238,3 +296,10 @@ def test_plan_search_queries_ends_with_soft_candidate_for_long_query():
         "aggregate",
         "rate",
     ]
+
+
+def test_soft_term_matching_uses_boundaries():
+    assert _term_present("as", "AS path")
+    assert _term_present("ad", "BGP AD auto discovery")
+    assert not _term_present("as", "class behavior")
+    assert not _term_present("ip", "membership")
