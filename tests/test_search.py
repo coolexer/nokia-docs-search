@@ -95,6 +95,15 @@ def test_plan_search_queries_removes_lowercase_product_noise():
     assert "ixr-e2" not in relaxed[0].fts_query.lower()
 
 
+def test_plan_search_queries_preserves_lowercase_meaningful_short_terms():
+    candidates = plan_search_queries("ip routing 7750")
+
+    relaxed = [c for c in candidates if c.match_mode == "relaxed"]
+    assert relaxed
+    assert relaxed[0].important_terms == ["ip", "routing"]
+    assert '"ip"*' in relaxed[0].fts_query
+
+
 def test_plan_search_queries_preserves_mixed_quoted_query():
     candidates = plan_search_queries('"boundary clock" protocol')
 

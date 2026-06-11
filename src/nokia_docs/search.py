@@ -62,6 +62,9 @@ _NOISE_TERMS = {
 _NOISE_TERMS_NORMALIZED = {term.casefold() for term in _NOISE_TERMS}
 
 _MEANINGFUL_SHORT_TERMS = {"AD", "AS", "IP", "L2", "L3", "PTP", "BGP", "QoS"}
+_MEANINGFUL_SHORT_TERMS_NORMALIZED = {
+    term.casefold() for term in _MEANINGFUL_SHORT_TERMS
+}
 
 _VARIANT_REPLACEMENTS = {
     "signalling": ["signaling"],
@@ -127,7 +130,10 @@ def _relaxed_terms(terms: list[str]) -> list[str]:
         skip_next_class_letter = False
         if normalized_noise in _NOISE_TERMS_NORMALIZED or _is_release_like(normalized):
             continue
-        if len(normalized) <= 2 and normalized not in _MEANINGFUL_SHORT_TERMS:
+        if (
+            len(normalized) <= 2
+            and normalized.casefold() not in _MEANINGFUL_SHORT_TERMS_NORMALIZED
+        ):
             continue
         result.append(normalized)
     return result
