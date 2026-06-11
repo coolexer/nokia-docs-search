@@ -112,14 +112,21 @@ mcp = FastMCP(
     name="nokia-docs",
     instructions=(
         "Nokia documentation and standards search. Use search_docs to find "
-        "documentation sections, release notes, and installation guides. Use "
+        "documentation sections, release notes, and installation guides. For "
+        "hardware evidence about power, fans, PSUs, redundancy, ports, optics, "
+        "airflow, FRUs, MDAs, and environmental limits, search platform terms "
+        "with chassis installation, hardware guide, specifications, and "
+        "orderable parts. For scale, capacity, performance, and numeric limits, "
+        "search exact values in product docs and release notes, including "
+        "new-features, enhancements, resolved-issues, and known-issues. Use "
         "get_document to read full content. Use get_page_sections when a hit "
         "points to the right page but nested protocol sections are unclear. "
         "Use list_products to see documentation products. Use search_standards "
-        "for standards compliance questions about RFC, ITU-T, IEEE, draft, "
-        "platform, or release support, and list_standards_products to see "
-        "indexed standards data. search_docs returns match_mode; non-strict "
-        "matches should be verified with get_document or get_page_sections."
+        "first for standards compliance questions about RFC, ITU-T, IEEE, "
+        "draft, platform, or release support, and list_standards_products only "
+        "to see indexed standards data. search_docs returns match_mode; "
+        "non-strict matches should be verified with get_document or "
+        "get_page_sections."
     ),
 )
 
@@ -132,6 +139,20 @@ def search_docs(
     top_k: int = 10,
 ) -> list[dict]:
     """Search Nokia documentation and release notes using full-text search (FTS5/BM25).
+
+    Evidence routing:
+        Hardware and physical platform questions about power, fans, PSUs,
+        redundancy, ports, optics, airflow, FRUs, MDAs, or environmental limits
+        should include terms such as "chassis installation", "hardware guide",
+        "specifications", or "orderable parts".
+        For scale, capacity, performance, and numeric-limit questions, search
+        exact values in product docs and release notes books such as
+        "new-features", "enhancements", "resolved-issues", and "known-issues".
+        Standards support questions belong in search_standards first; use docs
+        to explain behavior or configuration.
+        Returned snippets are candidates. Use match_mode to decide verification
+        depth, and fetch final evidence with get_document. If the right page is
+        found but the subsection is unclear, use get_page_sections.
 
     Args:
         query:        Natural-language query or FTS5 syntax.
