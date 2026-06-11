@@ -59,6 +59,7 @@ _NOISE_TERMS = {
     "7250", "7750", "7705", "7210", "7450", "7950",
     "IXR", "IXR-e", "IXR-e2", "SR", "SR-1", "SR-2", "VSR",
 }
+_NOISE_TERMS_NORMALIZED = {term.casefold() for term in _NOISE_TERMS}
 
 _MEANINGFUL_SHORT_TERMS = {"AD", "AS", "IP", "L2", "L3", "PTP", "BGP", "QoS"}
 
@@ -81,7 +82,7 @@ def _is_explicit_fts(query: str) -> bool:
 
 
 def _query_words(query: str) -> list[str]:
-    bare = re.sub(r'"[^"]*"', " ", query.replace('"', " "))
+    bare = re.sub(r'"[^"]*"', " ", query).replace('"', " ")
     return [w for w in re.split(r"\s+", bare.strip()) if w]
 
 
@@ -116,6 +117,7 @@ def _relaxed_terms(terms: list[str]) -> list[str]:
     skip_next_class_letter = False
     for term in terms:
         normalized = term.strip(",;()[]")
+        normalized_noise = normalized.casefold()
         if skip_next_class_letter and re.fullmatch(r"[A-Za-z]", normalized):
             skip_next_class_letter = False
             continue
@@ -123,7 +125,7 @@ def _relaxed_terms(terms: list[str]) -> list[str]:
             skip_next_class_letter = True
             continue
         skip_next_class_letter = False
-        if normalized in _NOISE_TERMS or _is_release_like(normalized):
+        if normalized_noise in _NOISE_TERMS_NORMALIZED or _is_release_like(normalized):
             continue
         if len(normalized) <= 2 and normalized not in _MEANINGFUL_SHORT_TERMS:
             continue
@@ -157,7 +159,7 @@ def plan_search_queries(query: str) -> list[SearchCandidate]:
     query = query.strip()
     if not query:
         return []
-    if _is_explicit_fts(query) or (query.startswith('"') and query.endswith('"')):
+    if _is_explicit_fts(query) or '"' in query:
         return [SearchCandidate("strict", query, _query_words(query))]
 
     terms = _query_words(query)

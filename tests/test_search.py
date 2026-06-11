@@ -86,6 +86,24 @@ def test_plan_search_queries_relaxes_product_and_class_noise():
     assert "IXR-e2" not in relaxed[0].fts_query
 
 
+def test_plan_search_queries_removes_lowercase_product_noise():
+    candidates = plan_search_queries("ixr-e2 boundary clock")
+
+    relaxed = [c for c in candidates if c.match_mode == "relaxed"]
+    assert relaxed
+    assert relaxed[0].important_terms == ["boundary", "clock"]
+    assert "ixr-e2" not in relaxed[0].fts_query.lower()
+
+
+def test_plan_search_queries_preserves_mixed_quoted_query():
+    candidates = plan_search_queries('"boundary clock" protocol')
+
+    assert len(candidates) == 1
+    assert candidates[0].match_mode == "strict"
+    assert candidates[0].fts_query == '"boundary clock" protocol'
+    assert candidates[0].important_terms == ["protocol"]
+
+
 def test_plan_search_queries_adds_spelling_and_punctuation_variants():
     candidates = plan_search_queries("BGP-AD auto-discovery VPLS signalling")
 
