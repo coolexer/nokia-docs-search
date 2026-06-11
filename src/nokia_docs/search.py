@@ -362,13 +362,15 @@ def search_docs(
         elif candidate.match_mode == "strict" and len(hits) >= enough_hits:
             return hits[:top_k]
 
+        added_from_candidate = False
         for hit in hits:
             if hit.doc_id in seen_doc_ids:
                 continue
             fallback_rows.append(hit)
             seen_doc_ids.add(hit.doc_id)
+            added_from_candidate = True
 
-        if fallback_rows and candidate.match_mode != "strict":
+        if added_from_candidate and candidate.match_mode != "strict":
             return fallback_rows[:top_k]
 
     return fallback_rows[:top_k]

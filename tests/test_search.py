@@ -226,6 +226,50 @@ def test_non_strict_fallback_appends_to_partial_strict_results(tmp_path):
     assert any(hit.match_mode == "relaxed" for hit in hits[1:])
 
 
+def test_duplicate_only_relaxed_candidate_continues_to_variant(tmp_path):
+    db_path = tmp_path / "duplicate-relaxed.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="sros-26-3",
+                book="services",
+                rel_path="26-3/books/services/noisy-signalling.html",
+                page_title="Noisy BGP-AD auto-discovery VPLS signalling",
+                section_id="noisy-signalling",
+                section_title="Noisy BGP-AD auto-discovery VPLS signalling",
+                section_path="Services > VPLS > Noisy signalling",
+                depth=2,
+                body="BGP-AD auto-discovery VPLS signalling 7250.",
+            ),
+            Chunk(
+                product_line="sros-26-3",
+                book="services",
+                rel_path="26-3/books/services/variant-signaling.html",
+                page_title="Variant BGP-AD auto-discovery VPLS signaling",
+                section_id="variant-signaling",
+                section_title="Variant BGP-AD auto-discovery VPLS signaling",
+                section_path="Services > VPLS > Variant signaling",
+                depth=2,
+                body="BGP-AD auto-discovery VPLS signaling.",
+            ),
+        ],
+    )
+    conn.commit()
+    try:
+        hits = search_docs("BGP-AD auto-discovery VPLS signalling 7250", conn, top_k=5)
+    finally:
+        conn.close()
+
+    assert [hit.section_title for hit in hits] == [
+        "Noisy BGP-AD auto-discovery VPLS signalling",
+        "Variant BGP-AD auto-discovery VPLS signaling",
+    ]
+    assert [hit.match_mode for hit in hits] == ["strict", "variant"]
+    assert len({hit.doc_id for hit in hits}) == len(hits)
+
+
 def test_plan_search_queries_starts_with_strict_candidate():
     candidates = plan_search_queries("boundary clock")
 
