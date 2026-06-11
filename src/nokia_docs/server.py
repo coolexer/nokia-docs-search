@@ -1,8 +1,9 @@
 """FastMCP server — Nokia documentation FTS5 search.
 
-Three tools exposed to Claude:
+Tools exposed to Claude:
   search_docs      — full-text search, returns snippets + metadata
   get_document     — retrieve full text of a specific section
+  get_page_sections — list all indexed sections on the same page
   list_products    — list product lines and their books
 
 DB path from environment variable NOKIA_DOCS_DB (required at startup).
@@ -24,6 +25,9 @@ from nokia_docs.search import (
 )
 from nokia_docs.search import (
     get_document as _get_document,
+)
+from nokia_docs.search import (
+    get_page_sections as _get_page_sections,
 )
 from nokia_docs.search import (
     list_products as _list_products,
@@ -108,10 +112,14 @@ mcp = FastMCP(
     name="nokia-docs",
     instructions=(
         "Nokia documentation and standards search. Use search_docs to find "
-        "documentation sections, get_document to read full content, "
-        "list_products to see documentation products, search_standards for "
-        "standards compliance questions, and list_standards_products to see "
-        "indexed standards data."
+        "documentation sections, release notes, and installation guides. Use "
+        "get_document to read full content. Use get_page_sections when a hit "
+        "points to the right page but nested protocol sections are unclear. "
+        "Use list_products to see documentation products. Use search_standards "
+        "for standards compliance questions about RFC, ITU-T, IEEE, draft, "
+        "platform, or release support, and list_standards_products to see "
+        "indexed standards data. search_docs returns match_mode; non-strict "
+        "matches should be verified with get_document or get_page_sections."
     ),
 )
 
@@ -163,6 +171,7 @@ def search_docs(
             "rel_path":      h.rel_path,
             "snippet":       h.snippet,
             "score":         round(h.score, 4),
+            "match_mode":    h.match_mode,
         }
         for h in hits
     ]
@@ -204,6 +213,16 @@ def get_document(
         "body":          doc.body,
         "neighbors":     doc.neighbors,
     }
+
+
+@mcp.tool()
+def get_page_sections(doc_id: int) -> dict:
+    """List all indexed sections on the same page as a documentation hit."""
+    conn = _get_conn()
+    page = _get_page_sections(doc_id=doc_id, conn=conn)
+    if page is None:
+        return {"error": f"Document {doc_id} not found."}
+    return page
 
 
 @mcp.tool()

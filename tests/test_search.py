@@ -218,6 +218,16 @@ def test_short_query_stays_strict(tmp_path):
     assert hits[0].match_mode == "strict"
 
 
+def test_search_docs_hits_include_match_mode(tmp_path):
+    conn = _build_db(tmp_path)
+    try:
+        hit = search_docs("boundary clock", conn, top_k=1)[0]
+    finally:
+        conn.close()
+
+    assert hit.match_mode == "strict"
+
+
 def test_non_strict_fallback_appends_to_partial_strict_results(tmp_path):
     conn = _build_db(tmp_path)
     try:
