@@ -3,7 +3,7 @@ from pathlib import Path
 
 from nokia_docs.index import _insert_chunks, _open_db
 from nokia_docs.parse import Chunk
-from nokia_docs.search import _sanitize_query, search_docs
+from nokia_docs.search import _sanitize_query, plan_search_queries, search_docs
 
 
 def _build_db(tmp_path: Path) -> sqlite3.Connection:
@@ -66,3 +66,48 @@ def test_prefix_query_can_be_combined_with_product_filter(tmp_path):
         conn.close()
 
     assert [h.section_title for h in hits] == ["RSVP interface configuration"]
+
+
+def test_plan_search_queries_starts_with_strict_candidate():
+    candidates = plan_search_queries("boundary clock")
+
+    assert candidates[0].match_mode == "strict"
+    assert candidates[0].fts_query == '"boundary clock" OR ("boundary"* AND "clock"*)'
+    assert candidates[0].important_terms == ["boundary", "clock"]
+
+
+def test_plan_search_queries_relaxes_product_and_class_noise():
+    candidates = plan_search_queries("PTP boundary clock G.8273.2 class C class D 7250 IXR-e2")
+
+    relaxed = [c for c in candidates if c.match_mode == "relaxed"]
+    assert relaxed
+    assert relaxed[0].important_terms == ["PTP", "boundary", "clock", "G.8273.2"]
+    assert "7250" not in relaxed[0].fts_query
+    assert "IXR-e2" not in relaxed[0].fts_query
+
+
+def test_plan_search_queries_adds_spelling_and_punctuation_variants():
+    candidates = plan_search_queries("BGP-AD auto-discovery VPLS signalling")
+
+    variant_queries = [c.fts_query for c in candidates if c.match_mode == "variant"]
+    joined = "\n".join(variant_queries)
+    assert '"signaling"*' in joined
+    assert '"BGP"*' in joined
+    assert '"AD"*' in joined
+    assert '"auto"*' in joined
+    assert '"discovery"*' in joined
+
+
+def test_plan_search_queries_ends_with_soft_candidate_for_long_query():
+    candidates = plan_search_queries("hierarchical QoS scheduler egress aggregate rate")
+
+    assert candidates[-1].match_mode == "soft"
+    assert " OR " in candidates[-1].fts_query
+    assert candidates[-1].important_terms == [
+        "hierarchical",
+        "QoS",
+        "scheduler",
+        "egress",
+        "aggregate",
+        "rate",
+    ]

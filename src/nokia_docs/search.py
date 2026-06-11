@@ -21,6 +21,13 @@ class Hit:
     score: float
 
 
+@dataclass(frozen=True)
+class SearchCandidate:
+    match_mode: str
+    fts_query: str
+    important_terms: list[str]
+
+
 @dataclass
 class Document:
     doc_id: int
@@ -48,6 +55,150 @@ def _resolve_product(product_line: str | None) -> str | None:
     return resolve_product(product_line)
 
 
+_NOISE_TERMS = {
+    "7250", "7750", "7705", "7210", "7450", "7950",
+    "IXR", "IXR-e", "IXR-e2", "SR", "SR-1", "SR-2", "VSR",
+}
+
+_MEANINGFUL_SHORT_TERMS = {"AD", "AS", "IP", "L2", "L3", "PTP", "BGP", "QoS"}
+
+_VARIANT_REPLACEMENTS = {
+    "signalling": ["signaling"],
+    "signaling": ["signalling"],
+    "BGP-AD": ["BGP AD"],
+    "auto-discovery": ["auto discovery"],
+    "AS path": ["AS-path"],
+    "AS-path": ["AS path"],
+    "QoS": ["QOS"],
+    "QOS": ["QoS"],
+}
+
+
+def _is_explicit_fts(query: str) -> bool:
+    return bool(re.search(r"\b(AND|OR|NOT|NEAR)\b", query)) or any(
+        op in query for op in (" + ", "*")
+    )
+
+
+def _query_words(query: str) -> list[str]:
+    bare = re.sub(r'"[^"]*"', " ", query.replace('"', " "))
+    return [w for w in re.split(r"\s+", bare.strip()) if w]
+
+
+def _quote_prefix(term: str) -> str:
+    escaped = term.replace('"', '""')
+    return f'"{escaped}"*'
+
+
+def _and_query(terms: list[str]) -> str:
+    return " AND ".join(_quote_prefix(term) for term in terms)
+
+
+def _or_query(terms: list[str]) -> str:
+    return " OR ".join(_quote_prefix(term) for term in terms)
+
+
+def _strict_query(query: str, terms: list[str]) -> str:
+    if not terms:
+        return ""
+    if len(terms) == 1:
+        return _quote_prefix(terms[0])
+    phrase = " ".join(terms).replace('"', '""')
+    return f'"{phrase}" OR ({_and_query(terms)})'
+
+
+def _is_release_like(term: str) -> bool:
+    return bool(re.fullmatch(r"\d{2}\.\d+(?:\.R\d+)?", term))
+
+
+def _relaxed_terms(terms: list[str]) -> list[str]:
+    result: list[str] = []
+    skip_next_class_letter = False
+    for term in terms:
+        normalized = term.strip(",;()[]")
+        if skip_next_class_letter and re.fullmatch(r"[A-Za-z]", normalized):
+            skip_next_class_letter = False
+            continue
+        if normalized.lower() == "class":
+            skip_next_class_letter = True
+            continue
+        skip_next_class_letter = False
+        if normalized in _NOISE_TERMS or _is_release_like(normalized):
+            continue
+        if len(normalized) <= 2 and normalized not in _MEANINGFUL_SHORT_TERMS:
+            continue
+        result.append(normalized)
+    return result
+
+
+def _variant_term_sets(query: str, terms: list[str]) -> list[list[str]]:
+    variants: list[list[str]] = []
+    for source, replacements in _VARIANT_REPLACEMENTS.items():
+        if source in query:
+            for replacement in replacements:
+                variant_query = query.replace(source, replacement)
+                variant_terms = _relaxed_terms(_query_words(variant_query))
+                if variant_terms and variant_terms != terms and variant_terms not in variants:
+                    variants.append(variant_terms)
+    for term in terms:
+        if "-" in term:
+            candidate = [
+                part
+                for t in terms
+                for part in (t.split("-") if t == term else [t])
+            ]
+            if candidate not in variants:
+                variants.append(candidate)
+    return variants
+
+
+def plan_search_queries(query: str) -> list[SearchCandidate]:
+    """Build ordered FTS candidates for strict and fallback documentation search."""
+    query = query.strip()
+    if not query:
+        return []
+    if _is_explicit_fts(query) or (query.startswith('"') and query.endswith('"')):
+        return [SearchCandidate("strict", query, _query_words(query))]
+
+    terms = _query_words(query)
+    candidates: list[SearchCandidate] = []
+    strict = _strict_query(query, terms)
+    if strict:
+        candidates.append(SearchCandidate("strict", strict, terms))
+
+    relaxed_terms = _relaxed_terms(terms)
+    if relaxed_terms and relaxed_terms != terms:
+        candidates.append(
+            SearchCandidate(
+                "relaxed",
+                _strict_query(" ".join(relaxed_terms), relaxed_terms),
+                relaxed_terms,
+            )
+        )
+
+    for variant_terms in _variant_term_sets(query, relaxed_terms or terms):
+        candidates.append(
+            SearchCandidate(
+                "variant",
+                _strict_query(" ".join(variant_terms), variant_terms),
+                variant_terms,
+            )
+        )
+
+    soft_terms = relaxed_terms or terms
+    if len(soft_terms) > 1:
+        candidates.append(SearchCandidate("soft", _or_query(soft_terms), soft_terms))
+
+    unique: list[SearchCandidate] = []
+    seen: set[tuple[str, str]] = set()
+    for candidate in candidates:
+        key = (candidate.match_mode, candidate.fts_query)
+        if key not in seen and candidate.fts_query:
+            unique.append(candidate)
+            seen.add(key)
+    return unique
+
+
 def _sanitize_query(query: str) -> str:
     """Convert natural-language input into an FTS5 query.
 
@@ -60,27 +211,8 @@ def _sanitize_query(query: str) -> str:
     if not query:
         return ""
 
-    if re.search(r"\b(AND|OR|NOT|NEAR)\b", query) or any(op in query for op in (" + ", "*")):
-        return query
-
-    if query.startswith('"') and query.endswith('"'):
-        return query
-
-    quoted: list[str] = []
-    bare = re.sub(r'"[^"]*"', lambda m: (quoted.append(m.group()) or ""), query)
-    bare = bare.replace('"', "")
-    words = [w for w in re.split(r"\s+", bare.strip()) if w]
-
-    parts: list[str] = list(quoted)
-    if words:
-        if len(words) == 1:
-            parts.append(f'"{words[0]}"*')
-        else:
-            phrase = " ".join(words)
-            individual = " AND ".join(f'"{w}"*' for w in words)
-            parts.append(f'"{phrase}" OR ({individual})')
-
-    return " ".join(parts) if parts else ""
+    candidates = plan_search_queries(query)
+    return candidates[0].fts_query if candidates else ""
 
 
 _BM25_WEIGHTS = "10.0, 5.0, 3.0, 1.0"
