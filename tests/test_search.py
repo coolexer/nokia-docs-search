@@ -3,7 +3,13 @@ from pathlib import Path
 
 from nokia_docs.index import _insert_chunks, _open_db
 from nokia_docs.parse import Chunk
-from nokia_docs.search import _sanitize_query, _term_present, plan_search_queries, search_docs
+from nokia_docs.search import (
+    _sanitize_query,
+    _term_present,
+    get_page_sections,
+    plan_search_queries,
+    search_docs,
+)
 
 
 def _build_db(tmp_path: Path) -> sqlite3.Connection:
@@ -347,3 +353,31 @@ def test_soft_term_matching_uses_boundaries():
     assert _term_present("ad", "BGP AD auto discovery")
     assert not _term_present("as", "class behavior")
     assert not _term_present("ip", "membership")
+
+
+def test_get_page_sections_returns_same_page_tree(tmp_path):
+    conn = _build_db(tmp_path)
+    try:
+        seed = search_docs("boundary clock", conn, top_k=1)[0]
+        page = get_page_sections(seed.doc_id, conn)
+    finally:
+        conn.close()
+
+    assert page is not None
+    assert page["rel_path"] == "26-3/books/system/ptp.html"
+    assert [s["section_title"] for s in page["sections"]] == [
+        "PTP boundary clock",
+        "PTP clock classes",
+    ]
+    assert page["sections"][0]["section_id"] == "ptp-boundary-clock"
+    assert page["sections"][0]["depth"] == 2
+
+
+def test_get_page_sections_returns_none_for_unknown_doc_id(tmp_path):
+    conn = _build_db(tmp_path)
+    try:
+        page = get_page_sections(999999, conn)
+    finally:
+        conn.close()
+
+    assert page is None

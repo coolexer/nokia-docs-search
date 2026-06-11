@@ -423,6 +423,44 @@ def get_document(
     return doc
 
 
+def get_page_sections(doc_id: int, conn: sqlite3.Connection) -> dict | None:
+    """Return all indexed sections on the same documentation page as doc_id."""
+    row = conn.execute(
+        """SELECT id, product_line, book, page_title, rel_path
+           FROM docs
+           WHERE id = ?""",
+        (doc_id,),
+    ).fetchone()
+    if not row:
+        return None
+
+    sections = [
+        {
+            "doc_id": r[0],
+            "section_id": r[1],
+            "section_title": r[2],
+            "section_path": r[3],
+            "depth": r[4],
+        }
+        for r in conn.execute(
+            """SELECT id, section_id, section_title, section_path, depth
+               FROM docs
+               WHERE rel_path = ?
+               ORDER BY id""",
+            (row[4],),
+        ).fetchall()
+    ]
+
+    return {
+        "doc_id": row[0],
+        "product_line": row[1],
+        "book": row[2],
+        "page_title": row[3],
+        "rel_path": row[4],
+        "sections": sections,
+    }
+
+
 def list_products(conn: sqlite3.Connection) -> list[ProductInfo]:
     """List all product lines in the index with their books."""
     rows = conn.execute(
