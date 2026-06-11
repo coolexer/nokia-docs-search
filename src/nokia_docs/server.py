@@ -31,6 +31,16 @@ from nokia_docs.search import (
 from nokia_docs.search import (
     search_docs as _search_docs,
 )
+from nokia_docs.standards import (
+    StandardsHit,
+    StandardsProductInfo,
+)
+from nokia_docs.standards import (
+    list_standards_products as _list_standards_products,
+)
+from nokia_docs.standards import (
+    search_standards as _search_standards,
+)
 
 # --------------------------------------------------------------------------- #
 # DB connection — thread-local read-only connections                            #
@@ -97,8 +107,11 @@ def _get_conn() -> sqlite3.Connection:
 mcp = FastMCP(
     name="nokia-docs",
     instructions=(
-        "Nokia documentation search. Use search_docs to find relevant sections, "
-        "get_document to read full content, list_products to see what's available."
+        "Nokia documentation and standards search. Use search_docs to find "
+        "documentation sections, get_document to read full content, "
+        "list_products to see documentation products, search_standards for "
+        "standards compliance questions, and list_standards_products to see "
+        "indexed standards data."
     ),
 )
 
@@ -209,6 +222,69 @@ def list_products() -> list[dict]:
             "display_name": p.display_name,
             "num_sections": p.num_sections,
             "books":        p.books,
+        }
+        for p in products
+    ]
+
+
+@mcp.tool()
+def search_standards(
+    query: str | None = None,
+    product_line: str | None = None,
+    platform: str | None = None,
+    release: str | None = None,
+    group: str | None = None,
+    support_status: str | None = None,
+    top_k: int = 20,
+) -> list[dict]:
+    """Search Nokia standards compliance spreadsheet data.
+
+    Use this for questions like whether SR OS, SR Linux, 7250 IXR, or 7705 SAR
+    Gen2 supports a specific RFC, draft, or standards group in a release.
+    """
+    conn = _get_conn()
+    hits: list[StandardsHit] = _search_standards(
+        conn=conn,
+        query=query,
+        product_line=product_line,
+        platform=platform,
+        release=release,
+        group=group,
+        support_status=support_status,
+        top_k=top_k,
+    )
+    return [
+        {
+            "id":             h.id,
+            "product_line":   h.product_line,
+            "platform":       h.platform,
+            "release":        h.release,
+            "group_title":    h.group_title,
+            "standard_ref":   h.standard_ref,
+            "standard_title": h.standard_title,
+            "standard_text":  h.standard_text,
+            "support_status": h.support_status,
+            "source_name":    h.source_name,
+            "sheet_name":     h.sheet_name,
+            "row_number":     h.row_number,
+            "score":          round(h.score, 4),
+        }
+        for h in hits
+    ]
+
+
+@mcp.tool()
+def list_standards_products() -> list[dict]:
+    """List indexed standards-compliance products, platforms, releases, and sources."""
+    conn = _get_conn()
+    products: list[StandardsProductInfo] = _list_standards_products(conn)
+    return [
+        {
+            "product_line": p.product_line,
+            "platforms":    p.platforms,
+            "releases":     p.releases,
+            "num_records":  p.num_records,
+            "source_names": p.source_names,
         }
         for p in products
     ]
