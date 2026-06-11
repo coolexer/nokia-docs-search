@@ -107,6 +107,8 @@ PRODUCT_DISPLAY_NAMES: dict[str, str] = {
     "rn-eda": "Nokia EDA Release Notes",
     "rn-mag-c": "Nokia MAG-c Release Notes",
     "install-guides": "Nokia Chassis Installation Guides",
+    "sros-standards": "Nokia SR OS Standards Compliance",
+    "srlinux-standards": "Nokia SR Linux Standards Compliance",
 }
 
 

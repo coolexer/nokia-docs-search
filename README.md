@@ -32,6 +32,8 @@ remain inside the team environment.
 | `rn-eda` | Nokia EDA release notes |
 | `rn-mag-c` | Nokia MAG-c release notes |
 | `install-guides` | Nokia chassis installation guide PDFs |
+| `sros-standards` | Nokia SR OS standards compliance spreadsheets |
+| `srlinux-standards` | Nokia SR Linux standards compliance spreadsheets |
 
 ## Install
 
@@ -214,7 +216,32 @@ python index_pdf.py --db nokia_docs.db --pdf-dir /path/to/chassis-installation-g
 python reindex_pdf.py nokia_docs.db /path/to/chassis-installation-guides --fail-on-error
 ```
 
-### Manual Step 4: Validate The Database Artifact
+### Manual Step 4: Index Standards Compliance Spreadsheets
+
+Index SR OS and SR Linux standards compliance spreadsheets into the same
+database:
+
+```bash
+nokia-docs index-standards \
+  --db nokia_docs.db \
+  --standards-file /path/to/7x50-standards-compliance.xlsx \
+  --standards-file /path/to/SR_Linux-standards-compliance.xlsx
+```
+
+To replace existing standards rows:
+
+```bash
+nokia-docs reindex-standards \
+  --db nokia_docs.db \
+  --standards-file /path/to/7x50-standards-compliance.xlsx \
+  --standards-file /path/to/SR_Linux-standards-compliance.xlsx
+```
+
+`reindex-standards` stages and parses replacement files before deleting old
+standards rows, so an unreadable replacement file does not remove the existing
+standards index.
+
+### Manual Step 5: Validate The Database Artifact
 
 Before distributing a rebuilt database, validate schema metadata and table
 consistency:
@@ -223,8 +250,8 @@ consistency:
 nokia-docs validate-db --db nokia_docs.db
 ```
 
-The command checks schema compatibility plus `docs`, `docs_body`, and `docs_fts`
-row consistency.
+The command checks schema compatibility plus row consistency for documentation
+and standards FTS tables.
 
 ## Run The MCP Server
 
