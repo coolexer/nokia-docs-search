@@ -408,7 +408,7 @@ def get_document(
 
     if include_neighbors:
         siblings = conn.execute(
-            """SELECT d.id, d.section_title, d.depth
+            """SELECT d.id, d.section_title, d.section_path, d.depth
                FROM docs d
                WHERE d.rel_path = ? AND d.id != ?
                ORDER BY d.id
@@ -416,7 +416,13 @@ def get_document(
             (doc.rel_path, doc_id),
         ).fetchall()
         doc.neighbors = [
-            {"doc_id": r[0], "section_title": r[1], "depth": r[2]}
+            {
+                "doc_id": r[0],
+                "section_title": r[1],
+                "section_path": r[2],
+                "depth": r[3],
+                "relation": "same_page",
+            }
             for r in siblings
         ]
 

@@ -6,6 +6,7 @@ from nokia_docs.parse import Chunk
 from nokia_docs.search import (
     _sanitize_query,
     _term_present,
+    get_document,
     get_page_sections,
     plan_search_queries,
     search_docs,
@@ -391,3 +392,19 @@ def test_get_page_sections_returns_none_for_unknown_doc_id(tmp_path):
         conn.close()
 
     assert page is None
+
+
+def test_get_document_neighbors_include_path_and_relation(tmp_path):
+    conn = _build_db(tmp_path)
+    try:
+        hit = search_docs("boundary clock", conn, top_k=1)[0]
+        doc = get_document(hit.doc_id, conn, include_neighbors=True)
+    finally:
+        conn.close()
+
+    assert doc is not None
+    assert doc.neighbors
+    neighbor = doc.neighbors[0]
+    assert set(neighbor) == {"doc_id", "section_title", "section_path", "depth", "relation"}
+    assert neighbor["section_title"] == "PTP clock classes"
+    assert neighbor["relation"] == "same_page"
