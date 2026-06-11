@@ -6,6 +6,7 @@ from nokia_docs.db import read_build_manifest, validate_database, validate_metad
 from nokia_docs.index import index_cmd
 from nokia_docs.pdf_index import index_pdfs, reindex_pdfs
 from nokia_docs.rn import index_release_notes, reindex_release_notes
+from nokia_docs.standards import index_standards, reindex_standards
 
 
 @click.group()
@@ -104,6 +105,36 @@ def reindex_pdf_cmd(db_path: str, pdf_dir: str, fail_on_error: bool):
     """Remove existing installation guide rows and index PDFs again."""
     from pathlib import Path
     reindex_pdfs(Path(db_path), Path(pdf_dir), fail_on_error=fail_on_error)
+
+
+@main.command("index-standards")
+@click.option("--db", "db_path", default="nokia_docs.db", show_default=True,
+              type=click.Path(dir_okay=False),
+              help="SQLite database path.")
+@click.option("--standards-file", "standards_files", multiple=True, required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Standards compliance XLSX file. Can be supplied more than once.")
+@click.option("--product", default=None,
+              help="Optional product override for a single standards file: sros or srlinux.")
+def index_standards_cmd(db_path: str, standards_files: tuple[str, ...], product: str | None):
+    """Index Nokia standards compliance spreadsheets."""
+    from pathlib import Path
+    index_standards(Path(db_path), [Path(p) for p in standards_files], product=product)
+
+
+@main.command("reindex-standards")
+@click.option("--db", "db_path", default="nokia_docs.db", show_default=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="SQLite database path.")
+@click.option("--standards-file", "standards_files", multiple=True, required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Standards compliance XLSX file. Can be supplied more than once.")
+@click.option("--product", default=None,
+              help="Optional product override for a single standards file: sros or srlinux.")
+def reindex_standards_cmd(db_path: str, standards_files: tuple[str, ...], product: str | None):
+    """Remove existing standards rows and index standards spreadsheets again."""
+    from pathlib import Path
+    reindex_standards(Path(db_path), [Path(p) for p in standards_files], product=product)
 
 
 @main.command("serve")

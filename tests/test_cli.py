@@ -31,6 +31,12 @@ def test_cli_exposes_build_db_command():
     assert "--strict" in result.output
 
 
+def test_build_db_accepts_optional_standards_files():
+    result = CliRunner().invoke(main, ["build-db", "--help"])
+    assert result.exit_code == 0
+    assert "--standards-file" in result.output
+
+
 def test_cli_exposes_index_rn_fail_on_error():
     result = CliRunner().invoke(main, ["index-rn", "--help"])
     assert result.exit_code == 0
@@ -54,3 +60,15 @@ def test_cli_exposes_reindex_commands():
     result = CliRunner().invoke(main, ["reindex-pdf", "--help"])
     assert result.exit_code == 0
     assert "Remove existing installation guide rows" in result.output
+
+
+def test_cli_exposes_standards_commands():
+    result = CliRunner().invoke(main, ["index-standards", "--help"])
+    assert result.exit_code == 0
+    assert "Index Nokia standards compliance spreadsheets" in result.output
+    assert "--standards-file" in result.output
+    assert "--product" in result.output
+
+    result = CliRunner().invoke(main, ["reindex-standards", "--help"])
+    assert result.exit_code == 0
+    assert "Remove existing standards rows" in result.output

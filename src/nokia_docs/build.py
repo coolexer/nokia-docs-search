@@ -11,6 +11,7 @@ from nokia_docs.db import record_build_manifest, validate_database, validate_met
 from nokia_docs.index import index_cmd
 from nokia_docs.pdf_index import index_pdfs
 from nokia_docs.rn import index_release_notes
+from nokia_docs.standards import index_standards
 
 
 def sha256_file(path: Path) -> str:
@@ -60,6 +61,9 @@ def write_sha256_sidecar(db_path: Path) -> str:
               help="HTML parser worker processes (default: CPU count).")
 @click.option("--strict/--no-strict", default=True, show_default=True,
               help="Fail when any source indexing step reports missing or failed inputs.")
+@click.option("--standards-file", "standards_files", multiple=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="Optional standards compliance XLSX file. Can be supplied more than once.")
 def build_db_cmd(
     html_root: str,
     rn_dir: str,
@@ -67,6 +71,7 @@ def build_db_cmd(
     output: str,
     workers: int,
     strict: bool,
+    standards_files: tuple[str, ...],
 ) -> None:
     """Build a complete Nokia documentation search database artifact."""
     db_path = Path(output).resolve()
@@ -86,6 +91,8 @@ def build_db_cmd(
     )
     index_release_notes(db_path, Path(rn_dir), fail_on_error=strict)
     index_pdfs(db_path, Path(pdf_dir), fail_on_error=strict)
+    if standards_files:
+        index_standards(db_path, [Path(p) for p in standards_files])
 
     artifact_hash = write_sha256_sidecar(db_path)
     metadata, errors = validate_db_file(db_path)
