@@ -19,6 +19,7 @@ class Hit:
     rel_path: str
     snippet: str
     score: float
+    match_mode: str = "strict"
 
 
 @dataclass(frozen=True)
@@ -226,19 +227,14 @@ def _sanitize_query(query: str) -> str:
 _BM25_WEIGHTS = "10.0, 5.0, 3.0, 1.0"
 
 
-def search_docs(
-    query: str,
+def _run_fts_search(
+    fts_query: str,
     conn: sqlite3.Connection,
     product_line: str | None = None,
     book: str | None = None,
     top_k: int = 10,
+    match_mode: str = "strict",
 ) -> list[Hit]:
-    """Full-text search across Nokia documentation."""
-    top_k = max(1, min(top_k, 50))
-    fts_query = _sanitize_query(query)
-    if not fts_query:
-        return []
-
     extra_where = ""
     params: list = [fts_query]
     resolved_product = resolve_product(product_line)
@@ -270,14 +266,7 @@ def search_docs(
         LIMIT ?
     """
 
-    try:
-        rows = conn.execute(sql, params).fetchall()
-    except sqlite3.OperationalError:
-        params[0] = '"' + query.replace('"', '""') + '"'
-        try:
-            rows = conn.execute(sql, params).fetchall()
-        except sqlite3.OperationalError:
-            return []
+    rows = conn.execute(sql, params).fetchall()
 
     return [
         Hit(
@@ -290,9 +279,98 @@ def search_docs(
             rel_path=r[6],
             snippet=r[7] or "",
             score=-r[8],
+            match_mode=match_mode,
         )
         for r in rows
     ]
+
+
+def _term_present(term: str, text: str) -> bool:
+    normalized_term = term.lower().replace("-", " ")
+    normalized_text = text.lower().replace("-", " ")
+    return normalized_term in normalized_text
+
+
+def _soft_match_count(hit: Hit, terms: list[str]) -> int:
+    haystack = " ".join([hit.page_title, hit.section_title, hit.section_path, hit.snippet])
+    return sum(1 for term in terms if _term_present(term, haystack))
+
+
+def _soft_title_path_count(hit: Hit, terms: list[str]) -> int:
+    haystack = " ".join([hit.page_title, hit.section_title, hit.section_path])
+    return sum(1 for term in terms if _term_present(term, haystack))
+
+
+def _rank_soft_hits(hits: list[Hit], terms: list[str]) -> list[Hit]:
+    return sorted(
+        hits,
+        key=lambda hit: (
+            -_soft_match_count(hit, terms),
+            -_soft_title_path_count(hit, terms),
+            -hit.score,
+            hit.doc_id,
+        ),
+    )
+
+
+def search_docs(
+    query: str,
+    conn: sqlite3.Connection,
+    product_line: str | None = None,
+    book: str | None = None,
+    top_k: int = 10,
+) -> list[Hit]:
+    """Full-text search across Nokia documentation."""
+    top_k = max(1, min(top_k, 50))
+    candidates = plan_search_queries(query)
+    if not candidates:
+        return []
+
+    enough_hits = min(top_k, 3)
+    fallback_rows: list[Hit] = []
+    seen_doc_ids: set[int] = set()
+
+    for candidate in candidates:
+        try:
+            hits = _run_fts_search(
+                candidate.fts_query,
+                conn,
+                product_line=product_line,
+                book=book,
+                top_k=top_k,
+                match_mode=candidate.match_mode,
+            )
+        except sqlite3.OperationalError:
+            if candidate.match_mode != "strict":
+                continue
+            escaped_query = '"' + query.replace('"', '""') + '"'
+            try:
+                hits = _run_fts_search(
+                    escaped_query,
+                    conn,
+                    product_line=product_line,
+                    book=book,
+                    top_k=top_k,
+                    match_mode=candidate.match_mode,
+                )
+            except sqlite3.OperationalError:
+                hits = []
+
+        if candidate.match_mode == "soft":
+            hits = _rank_soft_hits(hits, candidate.important_terms)
+        elif len(hits) >= enough_hits:
+            return hits[:top_k]
+
+        for hit in hits:
+            if hit.doc_id in seen_doc_ids:
+                continue
+            fallback_rows.append(hit)
+            seen_doc_ids.add(hit.doc_id)
+
+        if fallback_rows and candidate.match_mode != "strict":
+            return fallback_rows[:top_k]
+
+    return fallback_rows[:top_k]
 
 
 def get_document(
