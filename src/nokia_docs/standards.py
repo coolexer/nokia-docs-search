@@ -396,6 +396,58 @@ def search_standards(
     ]
 
 
+def summarize_standard_support(
+    conn: sqlite3.Connection,
+    *,
+    query: str,
+    product_line: str | None = None,
+    platform: str | None = None,
+    release: str | None = None,
+    top_k: int = 50,
+) -> list[dict[str, object]]:
+    """Return compact grouped standards support summaries."""
+    records = search_standards(
+        conn,
+        query=query,
+        product_line=product_line,
+        platform=platform,
+        release=release,
+        top_k=min(max(top_k, 1), 100),
+    )
+    grouped: dict[tuple[str, str, str, str, str], dict[str, object]] = {}
+
+    for record in records:
+        standard_key = record.standard_ref or record.standard_text
+        key = (
+            standard_key,
+            record.product_line or "",
+            record.release or "",
+            record.platform or "",
+            record.support_status or "",
+        )
+        item = grouped.setdefault(
+            key,
+            {
+                "standard_ref": record.standard_ref,
+                "standard_title": record.standard_title,
+                "product_line": record.product_line,
+                "release": record.release,
+                "platform": record.platform,
+                "support_status": record.support_status,
+                "num_records": 0,
+                "source_rows": [],
+                "representative_text": (record.standard_text or "")[:160],
+            },
+        )
+        item["num_records"] = int(item["num_records"]) + 1
+        source_rows = item["source_rows"]
+        if isinstance(source_rows, list) and record.row_number not in source_rows:
+            source_rows.append(record.row_number)
+            source_rows.sort()
+
+    return list(grouped.values())
+
+
 def list_standards_products(conn) -> list[StandardsProductInfo]:
     """List indexed standards product lines with coverage summaries."""
     if not _has_standards_tables(conn):

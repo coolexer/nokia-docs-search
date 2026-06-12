@@ -13,6 +13,7 @@ from nokia_docs.standards import (
     reindex_standards,
     search_standards,
     split_standard_text,
+    summarize_standard_support,
 )
 
 
@@ -312,6 +313,49 @@ def test_search_standards_filters_by_status_platform_release_and_group(tmp_path:
     assert len(hits) == 1
     assert hits[0].standard_ref == "RFC 5880"
     assert hits[0].platform == "7250 IXR"
+
+
+def test_summarize_standard_support_groups_records_compactly(tmp_path: Path):
+    sros_workbook = _save_workbook(
+        tmp_path / "sros.xlsx",
+        "SR OS 26.3.R1 Standards",
+        [
+            ["Group Title", "7250 IXR Standards"],
+            ["Bidirectional Forwarding Detection", "RFC 5880, Bidirectional Forwarding Detection"],
+            ["BFD Services", "RFC 5880, Bidirectional Forwarding Detection for services"],
+        ],
+    )
+    srlinux_workbook = _save_workbook(
+        tmp_path / "srlinux.xlsx",
+        "SR Linux 26.3.1 Standards",
+        [
+            ["Group Title", "SR Linux Standards"],
+            ["Bidirectional Forwarding Detection", "RFC 5880, Bidirectional Forwarding Detection"],
+        ],
+    )
+    db_path = tmp_path / "nokia_docs.db"
+    index_standards(db_path, [sros_workbook, srlinux_workbook])
+
+    conn = sqlite3.connect(db_path)
+    try:
+        summaries = summarize_standard_support(conn, query="RFC 5880", top_k=10)
+    finally:
+        conn.close()
+
+    sros_summary = next(
+        item
+        for item in summaries
+        if item["product_line"] == "sros-standards" and item["platform"] == "7250 IXR"
+    )
+
+    assert len(summaries) == 2
+    assert sros_summary["standard_ref"] == "RFC 5880"
+    assert sros_summary["standard_title"] == "Bidirectional Forwarding Detection"
+    assert sros_summary["release"] == "26.3.R1"
+    assert sros_summary["support_status"] == "supported"
+    assert sros_summary["num_records"] == 2
+    assert sros_summary["source_rows"] == [2, 3]
+    assert len(sros_summary["representative_text"]) <= 160
 
 
 def test_list_standards_products_returns_summary(tmp_path: Path):

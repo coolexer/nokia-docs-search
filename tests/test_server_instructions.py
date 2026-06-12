@@ -54,6 +54,18 @@ def test_mcp_instructions_include_compact_document_guidance():
         assert term in instructions
 
 
+def test_mcp_instructions_include_standards_summary_guidance():
+    instructions = server.mcp.instructions
+
+    for term in [
+        "summarize_standard_support",
+        "compact standards",
+        "search_standards",
+        "exact standards evidence",
+    ]:
+        assert term in instructions
+
+
 def test_search_docs_docstring_includes_evidence_routing():
     docstring = inspect.getdoc(_tool_fn(server.search_docs))
 

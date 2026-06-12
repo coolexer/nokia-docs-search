@@ -42,6 +42,13 @@ def test_search_standards_raises_startup_errors(monkeypatch):
         _callable_tool(server.search_standards)("RFC 5880")
 
 
+def test_summarize_standard_support_raises_startup_errors(monkeypatch):
+    monkeypatch.setattr(server, "_get_conn", lambda: (_ for _ in ()).throw(RuntimeError("DB missing")))
+
+    with pytest.raises(RuntimeError, match="DB missing"):
+        _callable_tool(server.summarize_standard_support)("RFC 5880")
+
+
 def test_list_standards_products_raises_startup_errors(monkeypatch):
     monkeypatch.setattr(server, "_get_conn", lambda: (_ for _ in ()).throw(RuntimeError("DB missing")))
 

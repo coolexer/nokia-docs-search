@@ -45,6 +45,9 @@ from nokia_docs.standards import (
 from nokia_docs.standards import (
     search_standards as _search_standards,
 )
+from nokia_docs.standards import (
+    summarize_standard_support as _summarize_standard_support,
+)
 
 # --------------------------------------------------------------------------- #
 # DB connection — thread-local read-only connections                            #
@@ -125,8 +128,9 @@ mcp = FastMCP(
         "a hit points to the right page but nested protocol sections are "
         "unclear; use max_sections=0 only when the full page map is needed. "
         "Use list_products to see documentation products. Use search_standards "
-        "first for standards compliance questions about RFC, ITU-T, IEEE, "
-        "draft, platform, or release support, and list_standards_products only "
+        "first for exact standards evidence about RFC, ITU-T, IEEE, draft, "
+        "platform, or release support; use summarize_standard_support for "
+        "compact standards reconnaissance, and list_standards_products only "
         "to see indexed standards data. search_docs returns match_mode; "
         "non-strict matches should be verified with get_document or "
         "get_page_sections."
@@ -347,6 +351,30 @@ def search_standards(
         }
         for h in hits
     ]
+
+
+@mcp.tool()
+def summarize_standard_support(
+    query: str,
+    product_line: str | None = None,
+    platform: str | None = None,
+    release: str | None = None,
+    top_k: int = 50,
+) -> list[dict]:
+    """Return compact grouped standards support summaries.
+
+    Use this for reconnaissance and comparison. Use search_standards for exact
+    row-level standards evidence.
+    """
+    conn = _get_conn()
+    return _summarize_standard_support(
+        conn=conn,
+        query=query,
+        product_line=product_line,
+        platform=platform,
+        release=release,
+        top_k=top_k,
+    )
 
 
 @mcp.tool()
