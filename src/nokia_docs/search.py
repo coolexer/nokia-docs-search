@@ -40,6 +40,10 @@ class Document:
     rel_path: str
     depth: int
     body: str
+    body_chars: int = 0
+    returned_chars: int = 0
+    body_truncated: bool = False
+    excerpt_query: str | None = None
     neighbors: list[dict] = field(default_factory=list)
 
 
@@ -376,10 +380,59 @@ def search_docs(
     return fallback_rows[:top_k]
 
 
+def _query_needles(query: str) -> list[str]:
+    quoted = re.findall(r'"([^"]+)"', query)
+    if quoted:
+        return [phrase for phrase in quoted if phrase.strip()]
+    terms = re.findall(r"[A-Za-z0-9_.-]+", query)
+    if len(terms) >= 2:
+        return [" ".join(terms), *terms]
+    return terms
+
+
+def _compact_body(
+    body: str,
+    *,
+    query: str | None,
+    max_chars: int | None,
+    context_chars: int,
+) -> tuple[str, int, int, bool, str | None]:
+    body_chars = len(body)
+    if max_chars is not None:
+        max_chars = max(1, max_chars)
+    context_chars = max(0, context_chars)
+
+    if query:
+        body_folded = body.casefold()
+        for needle in _query_needles(query):
+            index = body_folded.find(needle.casefold())
+            if index >= 0:
+                start = max(0, index - context_chars)
+                end = min(body_chars, index + len(needle) + context_chars)
+                excerpt = body[start:end]
+                if max_chars is not None and len(excerpt) > max_chars:
+                    match_offset = index - start
+                    match_start = max(0, match_offset - (max_chars // 2))
+                    match_end = min(len(excerpt), match_start + max_chars)
+                    match_start = max(0, match_end - max_chars)
+                    excerpt = excerpt[match_start:match_end]
+                return excerpt, body_chars, len(excerpt), len(excerpt) < body_chars, query
+
+    if max_chars is not None and body_chars > max_chars:
+        excerpt = body[:max_chars]
+        return excerpt, body_chars, len(excerpt), True, query
+
+    return body, body_chars, body_chars, False, query if query else None
+
+
 def get_document(
     doc_id: int,
     conn: sqlite3.Connection,
+    *,
     include_neighbors: bool = False,
+    max_chars: int | None = None,
+    query: str | None = None,
+    context_chars: int = 1500,
 ) -> Document | None:
     """Retrieve full text of a specific document section by ID."""
     row = conn.execute(
@@ -393,6 +446,12 @@ def get_document(
     ).fetchone()
     if not row:
         return None
+    body, body_chars, returned_chars, body_truncated, excerpt_query = _compact_body(
+        row[8] or "",
+        query=query,
+        max_chars=max_chars,
+        context_chars=context_chars,
+    )
 
     doc = Document(
         doc_id=row[0],
@@ -403,7 +462,11 @@ def get_document(
         section_path=row[5],
         rel_path=row[6],
         depth=row[7],
-        body=row[8],
+        body=body,
+        body_chars=body_chars,
+        returned_chars=returned_chars,
+        body_truncated=body_truncated,
+        excerpt_query=excerpt_query,
     )
 
     if include_neighbors:

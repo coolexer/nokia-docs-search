@@ -28,6 +28,13 @@ def test_get_page_sections_raises_startup_errors(monkeypatch):
         _callable_tool(server.get_page_sections)(123, max_sections=10, query="ospf")
 
 
+def test_get_document_raises_startup_errors_with_compact_args(monkeypatch):
+    monkeypatch.setattr(server, "_get_conn", lambda: (_ for _ in ()).throw(RuntimeError("DB missing")))
+
+    with pytest.raises(RuntimeError, match="DB missing"):
+        _callable_tool(server.get_document)(123, max_chars=100, query="boundary clock")
+
+
 def test_search_standards_raises_startup_errors(monkeypatch):
     monkeypatch.setattr(server, "_get_conn", lambda: (_ for _ in ()).throw(RuntimeError("DB missing")))
 

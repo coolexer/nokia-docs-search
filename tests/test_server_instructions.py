@@ -42,6 +42,18 @@ def test_mcp_instructions_include_bounded_page_section_guidance():
         assert term in instructions
 
 
+def test_mcp_instructions_include_compact_document_guidance():
+    instructions = server.mcp.instructions
+
+    for term in [
+        "get_document(query=",
+        "max_chars",
+        "full body",
+        "final evidence",
+    ]:
+        assert term in instructions
+
+
 def test_search_docs_docstring_includes_evidence_routing():
     docstring = inspect.getdoc(_tool_fn(server.search_docs))
 

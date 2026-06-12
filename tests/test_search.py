@@ -529,3 +529,105 @@ def test_get_document_neighbors_include_path_and_relation(tmp_path):
     assert set(neighbor) == {"doc_id", "section_title", "section_path", "depth", "relation"}
     assert neighbor["section_title"] == "PTP clock classes"
     assert neighbor["relation"] == "same_page"
+
+
+def test_get_document_caps_body_with_truncation_metadata(tmp_path):
+    db_path = tmp_path / "document-cap.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="sros-26-3",
+                book="configuration",
+                rel_path="sros/configuration/router.html",
+                page_title="Router",
+                section_id="router",
+                section_title="Router",
+                section_path="configure router",
+                depth=1,
+                body="A" * 300,
+            )
+        ],
+    )
+    conn.commit()
+    try:
+        document = get_document(1, conn, max_chars=80)
+    finally:
+        conn.close()
+
+    assert document is not None
+    assert document.body == "A" * 80
+    assert document.body_chars == 300
+    assert document.returned_chars == 80
+    assert document.body_truncated is True
+    assert document.excerpt_query is None
+
+
+def test_get_document_query_excerpt_centers_first_match(tmp_path):
+    body = "prefix " + ("A" * 120) + " boundary clock " + ("B" * 120)
+    db_path = tmp_path / "document-excerpt.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="sros-26-3",
+                book="configuration",
+                rel_path="sros/configuration/ptp.html",
+                page_title="PTP boundary clock",
+                section_id="ptp-boundary-clock",
+                section_title="PTP boundary clock",
+                section_path="ptp boundary-clock",
+                depth=2,
+                body=body,
+            )
+        ],
+    )
+    conn.commit()
+    try:
+        document = get_document(1, conn, query="boundary clock", context_chars=20)
+    finally:
+        conn.close()
+
+    assert document is not None
+    assert "boundary clock" in document.body
+    assert len(document.body) <= len("boundary clock") + 40
+    assert not document.body.startswith("prefix")
+    assert document.body_chars == len(body)
+    assert document.returned_chars == len(document.body)
+    assert document.body_truncated is True
+    assert document.excerpt_query == "boundary clock"
+
+
+def test_get_document_default_returns_full_body(tmp_path):
+    body = "full body " * 100
+    db_path = tmp_path / "document-full.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="sros-26-3",
+                book="configuration",
+                rel_path="sros/configuration/system.html",
+                page_title="System",
+                section_id="system",
+                section_title="System",
+                section_path="configure system",
+                depth=1,
+                body=body,
+            )
+        ],
+    )
+    conn.commit()
+    try:
+        document = get_document(1, conn)
+    finally:
+        conn.close()
+
+    assert document is not None
+    assert document.body == body
+    assert document.body_chars == len(body)
+    assert document.returned_chars == len(body)
+    assert document.body_truncated is False

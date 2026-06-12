@@ -119,7 +119,9 @@ mcp = FastMCP(
         "orderable parts. For scale, capacity, performance, and numeric limits, "
         "search exact values in product docs and release notes, including "
         "new-features, enhancements, resolved-issues, and known-issues. Use "
-        "get_document to read full content. Use bounded get_page_sections when "
+        "use get_document(query=..., max_chars=...) for compact excerpts while "
+        "navigating, then get_document without max_chars for the full body "
+        "before final evidence when needed. Use bounded get_page_sections when "
         "a hit points to the right page but nested protocol sections are "
         "unclear; use max_sections=0 only when the full page map is needed. "
         "Use list_products to see documentation products. Use search_standards "
@@ -203,14 +205,24 @@ def search_docs(
 def get_document(
     doc_id: int,
     include_neighbors: bool = False,
+    max_chars: int | None = None,
+    query: str | None = None,
+    context_chars: int = 1500,
 ) -> dict:
-    """Get the full text of a documentation section by its doc_id.
+    """Get the full text or a compact excerpt of a documentation section.
 
     Use doc_id from a previous search_docs call to retrieve complete content.
+    By default this returns the full body. During navigation, provide query and
+    max_chars to return a compact excerpt with truncation metadata. Fetch the
+    full body before using a document as final evidence when the excerpt is not
+    enough.
 
     Args:
         doc_id:            ID returned by search_docs.
         include_neighbors: If True, also return sibling sections on the same page.
+        max_chars:         Optional maximum body characters to return.
+        query:             Optional query used to center an excerpt.
+        context_chars:     Characters to include before and after a query match.
 
     Returns full body text, metadata, and optionally neighbour section list.
     """
@@ -220,6 +232,9 @@ def get_document(
         doc_id=doc_id,
         conn=conn,
         include_neighbors=include_neighbors,
+        max_chars=max_chars,
+        query=query,
+        context_chars=context_chars,
     )
     if doc is None:
         return {"error": f"Document {doc_id} not found."}
@@ -233,6 +248,10 @@ def get_document(
         "rel_path":      doc.rel_path,
         "depth":         doc.depth,
         "body":          doc.body,
+        "body_chars":    doc.body_chars,
+        "returned_chars": doc.returned_chars,
+        "body_truncated": doc.body_truncated,
+        "excerpt_query": doc.excerpt_query,
         "neighbors":     doc.neighbors,
     }
 
