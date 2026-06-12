@@ -119,8 +119,9 @@ mcp = FastMCP(
         "orderable parts. For scale, capacity, performance, and numeric limits, "
         "search exact values in product docs and release notes, including "
         "new-features, enhancements, resolved-issues, and known-issues. Use "
-        "get_document to read full content. Use get_page_sections when a hit "
-        "points to the right page but nested protocol sections are unclear. "
+        "get_document to read full content. Use bounded get_page_sections when "
+        "a hit points to the right page but nested protocol sections are "
+        "unclear; use max_sections=0 only when the full page map is needed. "
         "Use list_products to see documentation products. Use search_standards "
         "first for standards compliance questions about RFC, ITU-T, IEEE, "
         "draft, platform, or release support, and list_standards_products only "
@@ -152,7 +153,7 @@ def search_docs(
         to explain behavior or configuration.
         Returned snippets are candidates. Use match_mode to decide verification
         depth, and fetch final evidence with get_document. If the right page is
-        found but the subsection is unclear, use get_page_sections.
+        found but the subsection is unclear, use bounded get_page_sections.
 
     Args:
         query:        Natural-language query or FTS5 syntax.
@@ -237,10 +238,26 @@ def get_document(
 
 
 @mcp.tool()
-def get_page_sections(doc_id: int) -> dict:
-    """List all indexed sections on the same page as a documentation hit."""
+def get_page_sections(
+    doc_id: int,
+    max_sections: int = 200,
+    around_doc_id: bool = True,
+    query: str | None = None,
+) -> dict:
+    """List indexed sections on the same page as a documentation hit.
+
+    Results are capped by default to avoid returning thousands of command
+    reference siblings. Use max_sections=0 only when the full page map is
+    needed. Provide query to filter section titles and paths before windowing.
+    """
     conn = _get_conn()
-    page = _get_page_sections(doc_id=doc_id, conn=conn)
+    page = _get_page_sections(
+        doc_id=doc_id,
+        conn=conn,
+        max_sections=max_sections,
+        around_doc_id=around_doc_id,
+        query=query,
+    )
     if page is None:
         return {"error": f"Document {doc_id} not found."}
     return page

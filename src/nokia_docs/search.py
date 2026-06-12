@@ -429,8 +429,26 @@ def get_document(
     return doc
 
 
-def get_page_sections(doc_id: int, conn: sqlite3.Connection) -> dict | None:
-    """Return all indexed sections on the same documentation page as doc_id."""
+def _section_matches_query(section: dict[str, object], query: str) -> bool:
+    terms = [term.casefold() for term in re.findall(r"[A-Za-z0-9_.-]+", query)]
+    if not terms:
+        return True
+    haystack = " ".join(
+        str(section.get(field) or "")
+        for field in ("section_path", "section_title", "heading")
+    ).casefold()
+    return all(term in haystack for term in terms)
+
+
+def get_page_sections(
+    doc_id: int,
+    conn: sqlite3.Connection,
+    *,
+    max_sections: int = 200,
+    around_doc_id: bool = True,
+    query: str | None = None,
+) -> dict | None:
+    """Return indexed sections on the same documentation page as doc_id."""
     row = conn.execute(
         """SELECT id, product_line, book, page_title, rel_path
            FROM docs
@@ -447,6 +465,7 @@ def get_page_sections(doc_id: int, conn: sqlite3.Connection) -> dict | None:
             "section_title": r[2],
             "section_path": r[3],
             "depth": r[4],
+            "heading": r[2],
         }
         for r in conn.execute(
             """SELECT id, section_id, section_title, section_path, depth
@@ -457,13 +476,49 @@ def get_page_sections(doc_id: int, conn: sqlite3.Connection) -> dict | None:
         ).fetchall()
     ]
 
+    if query:
+        sections = [
+            section for section in sections if _section_matches_query(section, query)
+        ]
+
+    total_sections = len(sections)
+    normalized_max = max(0, max_sections)
+
+    if normalized_max and total_sections > normalized_max:
+        selected_index = next(
+            (
+                index
+                for index, section in enumerate(sections)
+                if section.get("doc_id") == doc_id
+            ),
+            0,
+        )
+        if around_doc_id:
+            half_window = normalized_max // 2
+            start = max(0, selected_index - half_window)
+            end = min(total_sections, start + normalized_max)
+            start = max(0, end - normalized_max)
+        else:
+            start = 0
+            end = normalized_max
+        returned_sections = sections[start:end]
+    else:
+        start = 0
+        end = total_sections
+        returned_sections = sections
+
     return {
         "doc_id": row[0],
         "product_line": row[1],
         "book": row[2],
         "page_title": row[3],
         "rel_path": row[4],
-        "sections": sections,
+        "total_sections": total_sections,
+        "returned_sections": len(returned_sections),
+        "truncated": len(returned_sections) < total_sections,
+        "window_start": start + 1 if returned_sections else 0,
+        "window_end": end,
+        "sections": returned_sections,
     }
 
 

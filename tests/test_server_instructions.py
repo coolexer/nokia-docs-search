@@ -31,6 +31,17 @@ def test_mcp_instructions_include_search_routing_hints():
         assert term in instructions
 
 
+def test_mcp_instructions_include_bounded_page_section_guidance():
+    instructions = server.mcp.instructions
+
+    for term in [
+        "bounded get_page_sections",
+        "max_sections=0",
+        "full page map",
+    ]:
+        assert term in instructions
+
+
 def test_search_docs_docstring_includes_evidence_routing():
     docstring = inspect.getdoc(_tool_fn(server.search_docs))
 

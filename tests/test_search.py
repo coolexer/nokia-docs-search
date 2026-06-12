@@ -384,6 +384,127 @@ def test_get_page_sections_returns_same_page_tree(tmp_path):
     assert page["sections"][0]["depth"] == 2
 
 
+def test_get_page_sections_returns_bounded_window_around_doc(tmp_path):
+    db_path = tmp_path / "bounded-sections.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="sros-26-3",
+                book="md-cli-command-reference",
+                rel_path="sros/md-cli-command-reference/service.html",
+                page_title="Service commands",
+                section_id=f"section-{i}",
+                section_title=f"Section {i}",
+                section_path=f"configure service section {i}",
+                depth=2,
+                body=f"Body {i}",
+            )
+            for i in range(1, 8)
+        ],
+    )
+    conn.commit()
+    try:
+        result = get_page_sections(4, conn, max_sections=3)
+    finally:
+        conn.close()
+
+    assert result is not None
+    assert result["total_sections"] == 7
+    assert result["returned_sections"] == 3
+    assert result["truncated"] is True
+    assert result["window_start"] == 3
+    assert result["window_end"] == 5
+    assert [section["doc_id"] for section in result["sections"]] == [3, 4, 5]
+
+
+def test_get_page_sections_zero_cap_returns_all_sections(tmp_path):
+    db_path = tmp_path / "all-sections.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="sros-26-3",
+                book="md-cli-command-reference",
+                rel_path="sros/md-cli-command-reference/service.html",
+                page_title="Service commands",
+                section_id=f"section-{i}",
+                section_title=f"Section {i}",
+                section_path=f"configure service section {i}",
+                depth=2,
+                body=f"Body {i}",
+            )
+            for i in range(1, 8)
+        ],
+    )
+    conn.commit()
+    try:
+        result = get_page_sections(4, conn, max_sections=0)
+    finally:
+        conn.close()
+
+    assert result is not None
+    assert result["total_sections"] == 7
+    assert result["returned_sections"] == 7
+    assert result["truncated"] is False
+    assert [section["doc_id"] for section in result["sections"]] == list(range(1, 8))
+
+
+def test_get_page_sections_filters_by_query_before_windowing(tmp_path):
+    db_path = tmp_path / "filtered-sections.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="sros-26-3",
+                book="md-cli-command-reference",
+                rel_path="sros/md-cli-command-reference/service.html",
+                page_title="Service commands",
+                section_id="ospf-service",
+                section_title="OSPF service",
+                section_path="configure service ospf",
+                depth=2,
+                body="OSPF body",
+            ),
+            Chunk(
+                product_line="sros-26-3",
+                book="md-cli-command-reference",
+                rel_path="sros/md-cli-command-reference/service.html",
+                page_title="Service commands",
+                section_id="bgp-service",
+                section_title="BGP service",
+                section_path="configure service bgp",
+                depth=2,
+                body="BGP body",
+            ),
+            Chunk(
+                product_line="sros-26-3",
+                book="md-cli-command-reference",
+                rel_path="sros/md-cli-command-reference/service.html",
+                page_title="Service commands",
+                section_id="ospf-area",
+                section_title="OSPF area",
+                section_path="configure router ospf area",
+                depth=2,
+                body="OSPF area body",
+            ),
+        ],
+    )
+    conn.commit()
+    try:
+        result = get_page_sections(2, conn, max_sections=10, query="ospf")
+    finally:
+        conn.close()
+
+    assert result is not None
+    assert result["total_sections"] == 2
+    assert result["returned_sections"] == 2
+    assert [section["doc_id"] for section in result["sections"]] == [1, 3]
+
+
 def test_get_page_sections_returns_none_for_unknown_doc_id(tmp_path):
     conn = _build_db(tmp_path)
     try:
