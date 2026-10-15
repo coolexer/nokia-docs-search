@@ -1,11 +1,11 @@
 import sqlite3
 from pathlib import Path
 
+from nokia_docs.db import normalize_fts_text, rebuild_fts
 from nokia_docs.index import _insert_chunks, _open_db
 from nokia_docs.parse import Chunk
 from nokia_docs.search import (
     _sanitize_query,
-    _term_present,
     get_document,
     get_page_sections,
     plan_search_queries,
@@ -176,7 +176,7 @@ def test_long_ptp_query_falls_back_to_relaxed(tmp_path):
 
     assert hits
     assert hits[0].section_title == "PTP boundary clock"
-    assert hits[0].match_mode in {"relaxed", "soft"}
+    assert hits[0].match_mode == "strict"
 
 
 def test_signalling_query_falls_back_to_variant(tmp_path):
@@ -188,10 +188,10 @@ def test_signalling_query_falls_back_to_variant(tmp_path):
 
     assert hits
     assert hits[0].section_title == "BGP auto discovery for VPLS"
-    assert hits[0].match_mode in {"variant", "soft"}
+    assert hits[0].match_mode == "strict"
 
 
-def test_qos_query_uses_soft_fallback_when_one_term_is_absent(tmp_path):
+def test_extra_unmatched_term_returns_no_hits(tmp_path):
     conn = _build_db(tmp_path)
     try:
         hits = search_docs(
@@ -202,9 +202,7 @@ def test_qos_query_uses_soft_fallback_when_one_term_is_absent(tmp_path):
     finally:
         conn.close()
 
-    assert hits
-    assert hits[0].section_title == "Virtual hierarchical scheduling"
-    assert hits[0].match_mode == "soft"
+    assert hits == []
 
 
 def test_short_query_stays_strict(tmp_path):
@@ -237,10 +235,9 @@ def test_non_strict_fallback_appends_to_partial_strict_results(tmp_path):
         conn.close()
 
     assert hits
-    assert hits[0].section_title == "Alpha beta strict seed"
-    assert hits[0].match_mode == "strict"
+    assert "Alpha beta strict seed" in {hit.section_title for hit in hits}
+    assert all(hit.match_mode == "strict" for hit in hits)
     assert len({hit.doc_id for hit in hits}) == len(hits)
-    assert any(hit.match_mode == "relaxed" for hit in hits[1:])
 
 
 def test_duplicate_only_relaxed_candidate_continues_to_variant(tmp_path):
@@ -279,11 +276,11 @@ def test_duplicate_only_relaxed_candidate_continues_to_variant(tmp_path):
     finally:
         conn.close()
 
-    assert [hit.section_title for hit in hits] == [
+    assert set(hit.section_title for hit in hits) == {
         "Noisy BGP-AD auto-discovery VPLS signalling",
         "Variant BGP-AD auto-discovery VPLS signaling",
-    ]
-    assert [hit.match_mode for hit in hits] == ["strict", "variant"]
+    }
+    assert all(hit.match_mode == "strict" for hit in hits)
     assert len({hit.doc_id for hit in hits}) == len(hits)
 
 
@@ -291,36 +288,36 @@ def test_plan_search_queries_starts_with_strict_candidate():
     candidates = plan_search_queries("boundary clock")
 
     assert candidates[0].match_mode == "strict"
-    assert candidates[0].fts_query == '"boundary clock" OR ("boundary"* AND "clock"*)'
+    assert candidates[0].fts_query == '"boundary clock" OR ("boundary" AND "clock")'
     assert candidates[0].important_terms == ["boundary", "clock"]
+    assert all(candidate.match_mode != "soft" for candidate in candidates)
 
 
 def test_plan_search_queries_relaxes_product_and_class_noise():
     candidates = plan_search_queries("PTP boundary clock G.8273.2 class C class D 7250 IXR-e2")
 
-    relaxed = [c for c in candidates if c.match_mode == "relaxed"]
-    assert relaxed
-    assert relaxed[0].important_terms == ["PTP", "boundary", "clock", "G.8273.2"]
-    assert "7250" not in relaxed[0].fts_query
-    assert "IXR-e2" not in relaxed[0].fts_query
+    assert candidates[0].match_mode == "strict"
+    assert candidates[0].important_terms == ["PTP", "boundary", "clock", "G.8273.2"]
+    assert "7250" not in candidates[0].fts_query
+    assert "IXR-e2" not in candidates[0].fts_query
+    assert "*" not in candidates[0].fts_query
 
 
 def test_plan_search_queries_removes_lowercase_product_noise():
     candidates = plan_search_queries("ixr-e2 boundary clock")
 
-    relaxed = [c for c in candidates if c.match_mode == "relaxed"]
-    assert relaxed
-    assert relaxed[0].important_terms == ["boundary", "clock"]
-    assert "ixr-e2" not in relaxed[0].fts_query.lower()
+    assert candidates[0].match_mode == "strict"
+    assert candidates[0].important_terms == ["boundary", "clock"]
+    assert "ixr-e2" not in candidates[0].fts_query.lower()
 
 
 def test_plan_search_queries_preserves_lowercase_meaningful_short_terms():
     candidates = plan_search_queries("ip routing 7750")
 
-    relaxed = [c for c in candidates if c.match_mode == "relaxed"]
-    assert relaxed
-    assert relaxed[0].important_terms == ["ip", "routing"]
-    assert '"ip"*' in relaxed[0].fts_query
+    assert candidates[0].match_mode == "strict"
+    assert candidates[0].important_terms == ["ip", "routing"]
+    assert '"ip"' in candidates[0].fts_query
+    assert '"ip"*' not in candidates[0].fts_query
 
 
 def test_plan_search_queries_preserves_mixed_quoted_query():
@@ -332,38 +329,32 @@ def test_plan_search_queries_preserves_mixed_quoted_query():
     assert candidates[0].important_terms == ["protocol"]
 
 
-def test_plan_search_queries_adds_spelling_and_punctuation_variants():
-    candidates = plan_search_queries("BGP-AD auto-discovery VPLS signalling")
+def test_plan_search_queries_expands_spelling_and_hyphens_in_the_first_query():
+    query = plan_search_queries("BGP-AD auto-discovery VPLS signalling")[0].fts_query
 
-    variant_queries = [c.fts_query for c in candidates if c.match_mode == "variant"]
-    joined = "\n".join(variant_queries)
-    assert '"signaling"*' in joined
-    assert '"BGP"*' in joined
-    assert '"AD"*' in joined
-    assert '"auto"*' in joined
-    assert '"discovery"*' in joined
+    assert '"signaling"' in query
+    assert '"signalling"' in query
+    assert '"BGP"' in query
+    assert '"AD"' in query
+    assert '"auto"' in query
+    assert '"discovery"' in query
+    assert "*" not in query
 
 
-def test_plan_search_queries_ends_with_soft_candidate_for_long_query():
+def test_plan_search_queries_has_no_soft_or():
     candidates = plan_search_queries("hierarchical QoS scheduler egress aggregate rate")
 
-    assert candidates[-1].match_mode == "soft"
-    assert " OR " in candidates[-1].fts_query
-    assert candidates[-1].important_terms == [
-        "hierarchical",
-        "QoS",
-        "scheduler",
-        "egress",
-        "aggregate",
-        "rate",
-    ]
+    assert candidates
+    assert all(candidate.match_mode != "soft" for candidate in candidates)
 
 
-def test_soft_term_matching_uses_boundaries():
-    assert _term_present("as", "AS path")
-    assert _term_present("ad", "BGP AD auto discovery")
-    assert not _term_present("as", "class behavior")
-    assert not _term_present("ip", "membership")
+def test_single_hyphenated_term_stays_exact():
+    assert plan_search_queries("hold-time")[0].fts_query == '"hold-time"'
+
+
+def test_normalize_fts_text_strips_trailing_period_only():
+    assert normalize_fts_text("Configure the clock.") == "Configure the clock"
+    assert normalize_fts_text("ITU-T G.8273.2 profile.") == "ITU-T G.8273.2 profile"
 
 
 def test_get_page_sections_returns_same_page_tree(tmp_path):
@@ -631,3 +622,259 @@ def test_get_document_default_returns_full_body(tmp_path):
     assert document.body_chars == len(body)
     assert document.returned_chars == len(body)
     assert document.body_truncated is False
+
+
+def test_trailing_period_still_matches_exact_term(tmp_path):
+    db_path = tmp_path / "period.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="sros-26-3",
+                book="system",
+                rel_path="sros/system/timing.html",
+                page_title="Timing",
+                section_id="timing",
+                section_title="Timing section",
+                section_path="System > Timing",
+                depth=1,
+                body="Configure the clock.",
+            )
+        ],
+    )
+    conn.commit()
+    try:
+        hits = search_docs("clock", conn, top_k=5)
+    finally:
+        conn.close()
+
+    assert [hit.section_title for hit in hits] == ["Timing section"]
+
+
+def test_body_only_section_is_still_found(tmp_path):
+    db_path = tmp_path / "titles.db"
+    conn = _open_db(db_path, reset=True)
+    chunks = [
+        Chunk(
+            product_line="sros-26-3",
+            book="system",
+            rel_path=f"sros/system/note-{i}.html",
+            page_title=f"boundary clock note {i}",
+            section_id=f"note-{i}",
+            section_title=f"boundary clock note {i}",
+            section_path=f"System > boundary clock note {i}",
+            depth=1,
+            body="unrelated text",
+        )
+        for i in range(3)
+    ]
+    chunks.append(
+        Chunk(
+            product_line="sros-26-3",
+            book="system",
+            rel_path="sros/system/body-only.html",
+            page_title="Unrelated",
+            section_id="body-only",
+            section_title="Unrelated",
+            section_path="System > Unrelated",
+            depth=1,
+            body="boundary clock lives only in the body",
+        )
+    )
+    _insert_chunks(conn, chunks)
+    conn.commit()
+    try:
+        hits = search_docs("boundary clock", conn, top_k=5)
+    finally:
+        conn.close()
+
+    titles = {hit.section_title for hit in hits}
+    assert "Unrelated" in titles
+    assert any(title.startswith("boundary clock note") for title in titles)
+
+
+def test_inferred_product_uses_newest_indexed_release(tmp_path):
+    db_path = tmp_path / "newest.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="7250-ixr",
+                book="hardware",
+                rel_path="ixr/hardware/fan.html",
+                page_title="Fan tray redundancy",
+                section_id="fan-old",
+                section_title="Fan tray redundancy",
+                section_path="Hardware > Fan tray",
+                depth=1,
+                body="old fan tray",
+            ),
+            Chunk(
+                product_line="7250-ixr-26-7",
+                book="hardware",
+                rel_path="ixr-26-7/hardware/fan.html",
+                page_title="Fan tray redundancy",
+                section_id="fan-new",
+                section_title="Fan tray redundancy",
+                section_path="Hardware > Fan tray",
+                depth=1,
+                body="new fan tray",
+            ),
+        ],
+    )
+    conn.commit()
+    try:
+        hits = search_docs("7250 IXR fan tray", conn, top_k=5)
+    finally:
+        conn.close()
+
+    assert [hit.product_line for hit in hits] == ["7250-ixr-26-7"]
+
+
+def test_inferred_product_falls_back_when_platform_misses(tmp_path):
+    db_path = tmp_path / "fallback-product.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="7250-ixr-26-7",
+                book="hardware",
+                rel_path="ixr/hardware/power.html",
+                page_title="Power supply",
+                section_id="power",
+                section_title="Power supply",
+                section_path="Hardware > Power",
+                depth=1,
+                body="Fans and power supplies.",
+            ),
+            Chunk(
+                product_line="sros-26-3",
+                book="system",
+                rel_path="sros/system/ptp.html",
+                page_title="PTP boundary clock",
+                section_id="ptp",
+                section_title="PTP boundary clock",
+                section_path="System > PTP",
+                depth=1,
+                body="PTP boundary clock supports G.8273.2.",
+            ),
+        ],
+    )
+    conn.commit()
+    try:
+        hits = search_docs("PTP boundary clock G.8273.2 7250 IXR", conn, top_k=5)
+    finally:
+        conn.close()
+
+    assert hits
+    assert hits[0].section_title == "PTP boundary clock"
+    assert hits[0].product_line == "sros-26-3"
+
+
+def test_explicit_product_does_not_widen(tmp_path):
+    db_path = tmp_path / "explicit.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="7250-ixr",
+                book="hardware",
+                rel_path="ixr/hardware/power.html",
+                page_title="Power supply",
+                section_id="power",
+                section_title="Power supply",
+                section_path="Hardware > Power",
+                depth=1,
+                body="Power supply details.",
+            ),
+            Chunk(
+                product_line="sros-26-3",
+                book="system",
+                rel_path="sros/system/ptp.html",
+                page_title="PTP boundary clock",
+                section_id="ptp",
+                section_title="PTP boundary clock",
+                section_path="System > PTP",
+                depth=1,
+                body="PTP boundary clock.",
+            ),
+        ],
+    )
+    conn.commit()
+    try:
+        hits = search_docs("boundary clock", conn, product_line="7250-ixr", top_k=5)
+    finally:
+        conn.close()
+
+    assert hits == []
+
+
+def test_get_page_sections_defaults_to_forty(tmp_path):
+    db_path = tmp_path / "forty.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="sros-26-3",
+                book="commands",
+                rel_path="sros/commands/service.html",
+                page_title="Service commands",
+                section_id=f"section-{i}",
+                section_title=f"Section {i}",
+                section_path=f"configure service section {i}",
+                depth=2,
+                body=f"Body {i}",
+            )
+            for i in range(1, 51)
+        ],
+    )
+    conn.commit()
+    try:
+        result = get_page_sections(25, conn)
+    finally:
+        conn.close()
+
+    assert result is not None
+    assert result["total_sections"] == 50
+    assert result["returned_sections"] == 40
+    assert result["truncated"] is True
+    assert any(section["doc_id"] == 25 for section in result["sections"])
+
+
+def test_rebuild_fts_strips_trailing_periods(tmp_path):
+    db_path = tmp_path / "rebuild.db"
+    conn = _open_db(db_path, reset=True)
+    _insert_chunks(
+        conn,
+        [
+            Chunk(
+                product_line="sros-26-3",
+                book="system",
+                rel_path="sros/system/timing.html",
+                page_title="Timing",
+                section_id="timing",
+                section_title="Timing section",
+                section_path="System > Timing",
+                depth=1,
+                body="Configure the clock.",
+            )
+        ],
+    )
+    conn.commit()
+    conn.execute("DELETE FROM docs_fts")
+    conn.execute(
+        """INSERT INTO docs_fts(rowid, section_title, page_title, section_path, body)
+           VALUES (1, 'Timing section', 'Timing', 'System > Timing', 'Configure the clock.')"""
+    )
+    conn.commit()
+    assert search_docs("clock", conn, top_k=5) == []
+    assert rebuild_fts(conn) == 1
+    hits = search_docs("clock", conn, top_k=5)
+    conn.close()
+
+    assert [hit.section_title for hit in hits] == ["Timing section"]

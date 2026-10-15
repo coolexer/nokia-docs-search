@@ -137,6 +137,25 @@ def reindex_standards_cmd(db_path: str, standards_files: tuple[str, ...], produc
     reindex_standards(Path(db_path), [Path(p) for p in standards_files], product=product)
 
 
+@main.command("rebuild-fts")
+@click.option("--db", "db_path", default="nokia_docs.db", show_default=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="SQLite database path.")
+def rebuild_fts_cmd(db_path: str):
+    """Rewrite the full-text index with normalized tokens."""
+    import sqlite3
+    from pathlib import Path
+
+    from nokia_docs.db import rebuild_fts
+
+    conn = sqlite3.connect(Path(db_path))
+    try:
+        count = rebuild_fts(conn)
+    finally:
+        conn.close()
+    click.echo(f"Rebuilt {count} FTS rows")
+
+
 @main.command("serve")
 def serve_cmd():
     """Start the MCP server (reads NOKIA_DOCS_DB env var)."""

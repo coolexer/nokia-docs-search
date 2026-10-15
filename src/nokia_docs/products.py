@@ -13,11 +13,16 @@ class ReleaseNoteProduct:
 
 
 PRODUCT_PATTERNS: list[tuple[str, str]] = [
+    ("SR Linux R26.7", "srlinux-26-7"),
+    ("SR Linux 26.7", "srlinux-26-7"),
     ("SR Linux", "srlinux-26-3"),
     ("sr-linux", "srlinux-26-3"),
     ("srlinux", "srlinux-26-3"),
     ("NSP webdocs", "nsp"),
     ("webdocs-enus", "nsp"),
+    ("7250_IXR_26.7", "7250-ixr-26-7"),
+    ("7250 IXR 26.7", "7250-ixr-26-7"),
+    ("26-7", "sros-26-7"),
     ("26-3", "sros-26-3"),
     ("7250_ixr", "7250-ixr"),
     ("7250_IXR", "7250-ixr"),
@@ -32,6 +37,10 @@ PRODUCT_PATTERNS: list[tuple[str, str]] = [
 
 
 PRODUCT_ALIASES: dict[str, str] = {
+    "srlinux-26-7": "srlinux-26-7",
+    "srlinux 26.7": "srlinux-26-7",
+    "sr linux 26.7": "srlinux-26-7",
+    "srl 26.7": "srlinux-26-7",
     "srlinux": "srlinux-26-3",
     "sr linux": "srlinux-26-3",
     "sr-linux": "srlinux-26-3",
@@ -42,6 +51,8 @@ PRODUCT_ALIASES: dict[str, str] = {
     "sr-os": "sros-26-3",
     "sros-26-3": "sros-26-3",
     "sros 26.3": "sros-26-3",
+    "sros-26-7": "sros-26-7",
+    "sros 26.7": "sros-26-7",
     "sros26": "sros-26-3",
     "7750": "sros-26-3",
     "7750-sr": "sros-26-3",
@@ -49,6 +60,9 @@ PRODUCT_ALIASES: dict[str, str] = {
     "7250": "7250-ixr",
     "7250 ixr": "7250-ixr",
     "7250-ixr": "7250-ixr",
+    "7250-ixr-26-7": "7250-ixr-26-7",
+    "7250 ixr 26.7": "7250-ixr-26-7",
+    "7250 26.7": "7250-ixr-26-7",
     "sar-gen2": "7705-sar-gen2",
     "sar gen2": "7705-sar-gen2",
     "7705-sar-gen2": "7705-sar-gen2",
@@ -95,8 +109,11 @@ PRODUCT_ALIASES: dict[str, str] = {
 
 PRODUCT_DISPLAY_NAMES: dict[str, str] = {
     "sros-26-3": "Nokia SR OS 26.3 (7750 SR / 7x50)",
+    "sros-26-7": "Nokia SR OS 26.7 (7750 SR / 7x50)",
     "srlinux-26-3": "Nokia SR Linux 26.3",
+    "srlinux-26-7": "Nokia SR Linux 26.7",
     "7250-ixr": "Nokia 7250 IXR 26.3 R1",
+    "7250-ixr-26-7": "Nokia 7250 IXR 26.7 R1",
     "7705-sar-gen2": "Nokia 7705 SAR Gen2",
     "7705-sar": "Nokia 7705 SAR",
     "7210-sas": "Nokia 7210 SAS 26.3 R1",

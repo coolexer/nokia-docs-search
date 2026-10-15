@@ -1,14 +1,18 @@
 """Shared SQLite helpers for Nokia documentation indexes."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 
+_TRAILING_DOT = re.compile(r"(?<=[A-Za-z0-9])\.(?![A-Za-z0-9])")
+
 SCHEMA_FILE = Path(__file__).parent / "schema.sql"
 SCHEMA_VERSION = 1
 APP_NAME = "nokia-docs-search"
+_DELETE_BATCH_SIZE = 500
 
 
 def open_write_db(db_path: Path, reset: bool = False) -> sqlite3.Connection:
@@ -136,6 +140,13 @@ def validate_database(conn: sqlite3.Connection) -> list[str]:
     return errors
 
 
+def normalize_fts_text(text: str) -> str:
+    """Drop sentence-final periods so FTS tokens match the word without a prefix scan."""
+    if not text:
+        return text
+    return _TRAILING_DOT.sub("", text)
+
+
 def insert_records(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
     """Insert normalized document records into docs, docs_body, and docs_fts."""
     inserted = 0
@@ -171,10 +182,10 @@ def insert_records(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
                        VALUES (?,?,?,?,?)""",
                     (
                         doc_id,
-                        r["section_title"],
-                        r["page_title"],
-                        r["section_path"],
-                        r["body"],
+                        normalize_fts_text(r["section_title"]),
+                        normalize_fts_text(r["page_title"]),
+                        normalize_fts_text(r["section_path"]),
+                        normalize_fts_text(r["body"]),
                     ),
                 )
                 inserted += 1
@@ -240,27 +251,29 @@ def delete_standards_product_lines(conn: sqlite3.Connection, product_lines: list
     if own_transaction:
         conn.execute("BEGIN")
     try:
-        if standard_ids:
-            standard_placeholders = ",".join("?" * len(standard_ids))
+        for start in range(0, len(standard_ids), _DELETE_BATCH_SIZE):
+            batch = standard_ids[start : start + _DELETE_BATCH_SIZE]
+            standard_placeholders = ",".join("?" * len(batch))
             conn.execute(
                 f"DELETE FROM standards_fts WHERE rowid IN ({standard_placeholders})",
-                standard_ids,
+                batch,
             )
             conn.execute(
                 f"DELETE FROM standards WHERE id IN ({standard_placeholders})",
-                standard_ids,
+                batch,
             )
-        if doc_ids:
-            doc_placeholders = ",".join("?" * len(doc_ids))
+        for start in range(0, len(doc_ids), _DELETE_BATCH_SIZE):
+            batch = doc_ids[start : start + _DELETE_BATCH_SIZE]
+            doc_placeholders = ",".join("?" * len(batch))
             conn.execute(
                 f"DELETE FROM docs_fts WHERE rowid IN ({doc_placeholders})",
-                doc_ids,
+                batch,
             )
             conn.execute(
                 f"DELETE FROM docs_body WHERE id IN ({doc_placeholders})",
-                doc_ids,
+                batch,
             )
-            conn.execute(f"DELETE FROM docs WHERE id IN ({doc_placeholders})", doc_ids)
+            conn.execute(f"DELETE FROM docs WHERE id IN ({doc_placeholders})", batch)
     except Exception:
         if own_transaction:
             conn.execute("ROLLBACK")
@@ -269,3 +282,49 @@ def delete_standards_product_lines(conn: sqlite3.Connection, product_lines: list
         if own_transaction:
             conn.execute("COMMIT")
     return deleted
+
+
+def rebuild_fts(conn: sqlite3.Connection) -> int:
+    """Rewrite docs_fts from stored text with trailing periods removed."""
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-200000")
+    ids = [row[0] for row in conn.execute("SELECT id FROM docs ORDER BY id")]
+    conn.execute("BEGIN")
+    try:
+        conn.execute("DELETE FROM docs_fts")
+        count = 0
+        for start in range(0, len(ids), _DELETE_BATCH_SIZE):
+            batch = ids[start : start + _DELETE_BATCH_SIZE]
+            placeholders = ",".join("?" * len(batch))
+            rows = conn.execute(
+                f"""SELECT d.id, d.section_title, d.page_title, d.section_path,
+                           IFNULL(b.body, '')
+                    FROM docs d
+                    LEFT JOIN docs_body b ON b.id = d.id
+                    WHERE d.id IN ({placeholders})""",
+                batch,
+            ).fetchall()
+            conn.executemany(
+                """INSERT INTO docs_fts
+                   (rowid, section_title, page_title, section_path, body)
+                   VALUES (?,?,?,?,?)""",
+                [
+                    (
+                        row[0],
+                        normalize_fts_text(row[1]),
+                        normalize_fts_text(row[2]),
+                        normalize_fts_text(row[3]),
+                        normalize_fts_text(row[4]),
+                    )
+                    for row in rows
+                ],
+            )
+            count += len(rows)
+        conn.execute("INSERT INTO docs_fts(docs_fts) VALUES('optimize')")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
+    return count

@@ -51,7 +51,7 @@ def write_sha256_sidecar(db_path: Path) -> str:
 @click.option("--html-root", required=True, type=click.Path(exists=True, file_okay=False),
               help="Root directory containing Nokia WebHelp HTML documentation.")
 @click.option("--rn-dir", required=True, type=click.Path(exists=True, file_okay=False),
-              help="Directory containing rn_*.csv and rn_eol.json.")
+              help="Directory containing release-notes-*.xlsx or rn_*.csv, plus rn_eol.json.")
 @click.option("--pdf-dir", required=True, type=click.Path(exists=True, file_okay=False),
               help="Directory containing Nokia chassis installation guide PDFs.")
 @click.option("-o", "--output", default="nokia_docs.db", show_default=True,
@@ -87,6 +87,7 @@ def build_db_cmd(
         output=str(db_path),
         reset=True,
         workers=workers,
+        product_line=None,
         fail_on_error=strict,
     )
     index_release_notes(db_path, Path(rn_dir), fail_on_error=strict)

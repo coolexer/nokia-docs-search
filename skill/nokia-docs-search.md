@@ -34,17 +34,17 @@ Aliases also work: `sros`, `7750`, `ixr`, `sar`, `sas`.
 
 ### Step 1 — Search
 ```
-search_docs("rsvp interface configuration", product_line="sros-26-3", top_k=8)
+search_docs("rsvp interface configuration", product_line="sros-26-3", top_k=5)
 ```
 
 For MD-CLI specific questions, include `"md-cli"` or `configure` in the query.
 
-### Step 2 — Get full content if needed
+### Step 2 — Read an excerpt
 When a snippet is not enough:
 ```
-get_document(doc_id=1234, include_neighbors=True)
+get_document(doc_id=1234, query="rsvp interface", max_chars=4000)
 ```
-`include_neighbors=True` also returns sibling sections on the same page — useful for context.
+Fetch the full body only when `body_truncated` is true and the excerpt does not contain the answer. Use `get_page_sections` when the page is right but the subsection is unclear. The default window is 40 sections. `max_sections=0` returns the full page map.
 
 ### Step 3 — Synthesise answer
 Use ONLY content from the retrieved documentation. Do not mix in training knowledge about Nokia CLI.

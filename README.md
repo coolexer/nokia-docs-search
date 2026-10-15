@@ -20,8 +20,11 @@ remain inside the team environment.
 | Product line | Content |
 |---|---|
 | `sros-26-3` | Nokia SR OS 26.3 documentation |
+| `sros-26-7` | Nokia SR OS 26.7 documentation |
 | `srlinux-26-3` | Nokia SR Linux 26.3 documentation |
+| `srlinux-26-7` | Nokia SR Linux 26.7 documentation |
 | `7250-ixr` | Nokia 7250 IXR documentation |
+| `7250-ixr-26-7` | Nokia 7250 IXR 26.7 documentation |
 | `7705-sar-gen2` | Nokia 7705 SAR Gen2 documentation |
 | `7705-sar` | Nokia 7705 SAR documentation |
 | `7210-sas` | Nokia 7210 SAS documentation |
@@ -144,11 +147,22 @@ nokia-docs index /path/to/nokia-docs-root -o nokia_docs.db
 
 # Control parser worker processes
 nokia-docs index /path/to/nokia-docs-root -o nokia_docs.db --workers 4
+
+# Override product detection for a standalone release export
+nokia-docs index /path/to/srlinux-26-7 -o nokia_docs.db --product "srl 26.7"
 ```
 
 ### Manual Step 2: Index Release Notes
 
-Release notes are expected as CSV/JSON files in a local directory:
+Release notes can be read directly from native XLSX workbooks (preferred):
+
+- `release-notes-sros.xlsx`
+- `release-notes-srl.xlsx`
+- `release-notes-sas.xlsx`
+- `release-notes-eda.xlsx`
+- `release-notes-mag-c.xlsx`
+
+Legacy CSV exports remain supported as a fallback:
 
 - `rn_sros.csv`
 - `rn_srl.csv`
@@ -366,8 +380,11 @@ search_docs("QSFP28 optical transceiver", product_line="chassis")
 | Aliases | Product line |
 |---|---|
 | `sros`, `sr os`, `7750` | `sros-26-3` |
+| `sros 26.7`, `sros-26-7` | `sros-26-7` |
 | `srl`, `srlinux`, `sr linux` | `srlinux-26-3` |
+| `srl 26.7`, `srlinux 26.7`, `sr linux 26.7` | `srlinux-26-7` |
 | `ixr`, `7250`, `7250-ixr` | `7250-ixr` |
+| `7250 26.7`, `7250 ixr 26.7`, `7250-ixr-26-7` | `7250-ixr-26-7` |
 | `sar-gen2`, `7705-sar-gen2` | `7705-sar-gen2` |
 | `sar`, `7705`, `7705-sar` | `7705-sar` |
 | `sas`, `7210`, `7210-sas` | `7210-sas` |
@@ -434,9 +451,9 @@ When an MCP client calls `search_docs`:
 1. `server.py` receives the FastMCP tool call.
 2. `products.py` resolves aliases such as `sros`, `srl`, `ixr`, `rn`, or
    `install` into canonical product slugs.
-3. `search.py` sanitizes natural-language text into an FTS5 query. Plain
-   multi-word input becomes a phrase query plus prefix-matched terms for better
-   recall.
+3. `search.py` sanitizes natural-language text into one FTS5 query. Noise
+   terms such as product names are removed first, and prefix scans are
+   reserved for an explicit `*`.
 4. SQLite FTS5 searches `docs_fts`, joins to `docs`, applies optional product
    and book filters, and orders by BM25 score.
 5. `server.py` serializes dataclass results into MCP-friendly dictionaries.
@@ -479,9 +496,10 @@ keeps `docs`, `docs_body`, and `docs_fts` synchronized in one transaction.
 parallelizes parsing, reports progress, records failures, and performs FTS
 optimization. `parse.py` turns each HTML page into normalized section records.
 
-`rn.py` treats release notes as structured data. It reads expected `rn_*.csv`
-and `rn_eol.json` files, maps product/version/category metadata into normalized
-records, and can replace only release-note product lines during re-indexing.
+`rn.py` treats release notes as structured data. It prefers native
+`release-notes-*.xlsx` workbooks, falls back to `rn_*.csv`, and also reads
+`rn_eol.json`. It maps product/version/category metadata into normalized records
+and can replace only release-note product lines during re-indexing.
 
 `parse_pdf.py` contains PDF-specific parsing rules, title cleanup, chunking, and
 document-number/issue extraction. `pdf_index.py` owns the DB write flow and

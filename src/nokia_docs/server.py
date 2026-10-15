@@ -122,9 +122,10 @@ mcp = FastMCP(
         "orderable parts. For scale, capacity, performance, and numeric limits, "
         "search exact values in product docs and release notes, including "
         "new-features, enhancements, resolved-issues, and known-issues. Use "
-        "use get_document(query=..., max_chars=...) for compact excerpts while "
-        "navigating, then get_document without max_chars for the full body "
-        "before final evidence when needed. Use bounded get_page_sections when "
+        "get_document(query=..., max_chars=...) for compact excerpts while "
+        "navigating. Fetch the full body before final evidence only when "
+        "body_truncated is true and the excerpt does not already contain the "
+        "answer. Use bounded get_page_sections when "
         "a hit points to the right page but nested protocol sections are "
         "unclear; use max_sections=0 only when the full page map is needed. "
         "Use list_products to see documentation products. Use search_standards "
@@ -143,7 +144,7 @@ def search_docs(
     query: str,
     product_line: str | None = None,
     book: str | None = None,
-    top_k: int = 10,
+    top_k: int = 5,
 ) -> list[dict]:
     """Search Nokia documentation and release notes using full-text search (FTS5/BM25).
 
@@ -167,17 +168,18 @@ def search_docs(
                                 "bgp hold-time", '"md-cli" configure router',
                                 "EVPN new features 26.3"
         product_line: Optional filter.
-                      Docs slugs : 'sros-26-3', 'srlinux-26-3', 'nsp',
-                                   '7250-ixr', '7705-sar-gen2', '7210-sas', '7705-sar'.
+                      Docs slugs : 'sros-26-3', 'sros-26-7', 'srlinux-26-3', 'nsp',
+                                   '7250-ixr', '7250-ixr-26-7', '7705-sar-gen2',
+                                   '7210-sas', '7705-sar'.
                       Docs aliases: 'sros','srlinux','srl','nsp','ixr','sar','sas'.
                       RN slugs  : 'rn-sros', 'rn-srl', 'rn-sas', 'rn-eda', 'rn-mag-c'.
                       RN aliases: 'rn', 'release notes', 'rn sros', 'rn srl', 'eda', 'mag-c'.
         book:         Optional filter by book/section (e.g. 'mpls', 'new-features',
                       'resolved-issues', 'known-issues').
-        top_k:        Number of results (1-50, default 10).
+        top_k:        Number of results (1-50, default 5).
 
     Returns list of hits with doc_id, product_line, book, section_title,
-    section_path, snippet (with [[highlighted]] terms), and BM25 score.
+    section_path, snippet (with [[highlighted]] terms), and match_mode.
     """
     conn = _get_conn()
 
@@ -196,9 +198,7 @@ def search_docs(
             "page_title":    h.page_title,
             "section_title": h.section_title,
             "section_path":  h.section_path,
-            "rel_path":      h.rel_path,
             "snippet":       h.snippet,
-            "score":         round(h.score, 4),
             "match_mode":    h.match_mode,
         }
         for h in hits
@@ -218,8 +218,8 @@ def get_document(
     Use doc_id from a previous search_docs call to retrieve complete content.
     By default this returns the full body. During navigation, provide query and
     max_chars to return a compact excerpt with truncation metadata. Fetch the
-    full body before using a document as final evidence when the excerpt is not
-    enough.
+    full body before final evidence only when body_truncated is true and the
+    excerpt does not already contain the answer.
 
     Args:
         doc_id:            ID returned by search_docs.
@@ -263,7 +263,7 @@ def get_document(
 @mcp.tool()
 def get_page_sections(
     doc_id: int,
-    max_sections: int = 200,
+    max_sections: int = 40,
     around_doc_id: bool = True,
     query: str | None = None,
 ) -> dict:

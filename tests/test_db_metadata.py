@@ -181,3 +181,34 @@ def test_validate_database_reports_standards_fts_mismatch(tmp_path):
         conn.close()
 
     assert any("standards/standards_fts row count mismatch" in error for error in errors)
+
+
+def test_delete_standards_product_lines_batches_large_indexes(tmp_path):
+    db_path = tmp_path / "large-standards.db"
+    conn = db.open_write_db(db_path)
+    try:
+        conn.execute(
+            """INSERT INTO standards_sources
+               (source_path, source_name, source_sha256, indexed_utc)
+               VALUES ('large.xlsx', 'large.xlsx', 'large', '2026-07-16T00:00:00+00:00')"""
+        )
+        source_id = conn.execute("SELECT id FROM standards_sources").fetchone()[0]
+        conn.executemany(
+            """INSERT INTO standards
+               (source_id, product_line, platform, release, group_title,
+                standard_ref, standard_title, standard_text, support_status,
+                sheet_name, row_number)
+               VALUES (?, 'sros-standards', '7750 SR', '26.7.R1', 'Routing',
+                       '', '', 'Supported standard', 'supported',
+                       'SR OS 26.7.R1 Standards', ?)""",
+            ((source_id, row_number) for row_number in range(1, 33_001)),
+        )
+        conn.commit()
+
+        deleted = db.delete_standards_product_lines(conn, ["sros-standards"])
+        remaining = conn.execute("SELECT COUNT(*) FROM standards").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert deleted == 33_000
+    assert remaining == 0

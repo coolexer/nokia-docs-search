@@ -1,4 +1,4 @@
-"""Index Nokia release notes CSV/JSON files into the search database."""
+"""Index Nokia release notes XLSX/CSV/JSON files into the search database."""
 from __future__ import annotations
 
 import csv
@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
+from openpyxl import load_workbook
 from selectolax.lexbor import LexborHTMLParser
 
 from nokia_docs.db import delete_product_lines, insert_records, open_write_db, record_build_manifest
@@ -22,6 +23,7 @@ RN_PRODUCT_LINES = [p.slug for p in RN_PRODUCTS]
 class IndexReport:
     inserted: int = 0
     source_counts: dict[str, int] = field(default_factory=dict)
+    source_files: dict[str, str] = field(default_factory=dict)
     missing_sources: list[str] = field(default_factory=list)
     elapsed_seconds: float = 0.0
     db_size_mb: float = 0.0
@@ -41,6 +43,15 @@ def _strip_html(text: str) -> str:
 
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def _cell_text(value: object) -> str:
+    """Return a stable string representation for an XLSX cell value."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    return str(value).strip()
 
 
 def _build_body(row: dict, product: str) -> str:
@@ -119,6 +130,55 @@ def _build_body_eol(entry: dict) -> str:
     return "\n".join(parts)
 
 
+def _build_product_records(product: str, data_rows: list[dict]) -> list[dict]:
+    """Map source rows for one release-note product to normalized document records."""
+    display = next((p.display_name for p in RN_PRODUCTS if p.key == product), product)
+    product_line = f"rn-{product}"
+
+    records: list[dict] = []
+    seen_ids: dict[tuple[str, str], int] = {}
+    for idx, row in enumerate(data_rows):
+        title = row.get("title", "").strip()
+        if not title:
+            continue
+
+        section = row.get("section", "").strip() or "General"
+        section_slug = _slug(section)
+        releases = [r.strip() for r in row.get("releaseList", "").split("|") if r.strip()]
+        first_release = releases[0] if releases else "unknown"
+        release_slug = _slug(first_release)
+        number = row.get("number", "").strip()
+        rel_path = f"rn/{product}/{release_slug}/{section_slug}.html"
+        base_id = number if number else f"rn-{idx + 1}"
+        seen_ids[(rel_path, base_id)] = seen_ids.get((rel_path, base_id), 0) + 1
+        occurrence = seen_ids[(rel_path, base_id)]
+        bullet = row.get("bullet", "").strip()
+        if occurrence == 1:
+            section_id = base_id
+        elif bullet and bullet not in {"0", "1"}:
+            section_id = f"{base_id}.{bullet}"
+        else:
+            section_id = f"{base_id}.{occurrence}"
+
+        body = _build_body(row, product)
+        records.append(
+            {
+                "product_line": product_line,
+                "book": section_slug,
+                "rel_path": rel_path,
+                "page_title": f"{display} {first_release} Release Notes",
+                "section_id": section_id,
+                "section_title": title,
+                "section_path": f"{first_release} {section} > {title}",
+                "depth": 0,
+                "char_len": len(body),
+                "body": body,
+            }
+        )
+
+    return records
+
+
 def load_csv_product(product: str, rn_dir: Path = Path(".")) -> list[dict]:
     csv_file = Path(rn_dir) / f"rn_{product}.csv"
     if not csv_file.exists():
@@ -132,40 +192,73 @@ def load_csv_product(product: str, rn_dir: Path = Path(".")) -> list[dict]:
         return []
 
     data_rows = all_rows[1:]  # first row is a metadata/context row
-    display = next((p.display_name for p in RN_PRODUCTS if p.key == product), product)
-    product_line = f"rn-{product}"
+    return _build_product_records(product, data_rows)
 
-    records: list[dict] = []
-    for idx, row in enumerate(data_rows):
-        title = row.get("title", "").strip()
-        if not title:
-            continue
 
-        section = row.get("section", "").strip() or "General"
-        section_slug = _slug(section)
-        releases = [r.strip() for r in row.get("releaseList", "").split("|") if r.strip()]
-        first_release = releases[0] if releases else "unknown"
-        release_slug = _slug(first_release)
-        number = row.get("number", "").strip()
-        section_id = number if number else f"rn-{idx + 1}"
+def load_xlsx_product(product: str, rn_dir: Path = Path(".")) -> list[dict]:
+    """Load a native Nokia release-notes workbook for one product."""
+    xlsx_file = Path(rn_dir) / f"release-notes-{product}.xlsx"
+    if not xlsx_file.exists():
+        click.echo(f"  [!] {xlsx_file} not found, skipping")
+        return []
 
-        body = _build_body(row, product)
-        records.append(
-            {
-                "product_line": product_line,
-                "book": section_slug,
-                "rel_path": f"rn/{product}/{release_slug}/{section_slug}.html",
-                "page_title": f"{display} {first_release} Release Notes",
-                "section_id": section_id,
-                "section_title": title,
-                "section_path": f"{first_release} {section} > {title}",
-                "depth": 0,
-                "char_len": len(body),
-                "body": body,
+    workbook = load_workbook(xlsx_file, read_only=True, data_only=True)
+    try:
+        if "rn" not in workbook.sheetnames:
+            raise click.ClickException(f"Worksheet 'rn' not found in {xlsx_file}")
+        sheet = workbook["rn"]
+        values = sheet.iter_rows(values_only=True)
+        header_values = next(values, None)
+        if not header_values:
+            return []
+
+        headers = [_cell_text(value).lower() for value in header_values]
+        required = {"release", "number", "section", "header", "text"}
+        missing = sorted(required.difference(headers))
+        if missing:
+            raise click.ClickException(
+                f"Required column(s) missing from {xlsx_file}: {', '.join(missing)}"
+            )
+
+        data_rows: list[dict] = []
+        for values_row in values:
+            source = {
+                header: _cell_text(value)
+                for header, value in zip(headers, values_row, strict=False)
+                if header
             }
-        )
+            data_rows.append(
+                {
+                    "title": source.get("header", ""),
+                    "section": source.get("section", ""),
+                    "releaseList": source.get("release", ""),
+                    "platforms": source.get("platforms", ""),
+                    "ref": source.get("ref", ""),
+                    "number": source.get("number", ""),
+                    "bullet": source.get("bullet", ""),
+                    "text": source.get("text", ""),
+                }
+            )
+    finally:
+        workbook.close()
 
-    return records
+    return _build_product_records(product, data_rows)
+
+
+def _product_source(product: str, rn_dir: Path) -> tuple[Path | None, list[dict]]:
+    """Load XLSX when present, otherwise fall back to the legacy CSV export."""
+    xlsx_file = rn_dir / f"release-notes-{product}.xlsx"
+    if xlsx_file.exists():
+        return xlsx_file, load_xlsx_product(product, rn_dir)
+
+    csv_file = rn_dir / f"rn_{product}.csv"
+    if csv_file.exists():
+        return csv_file, load_csv_product(product, rn_dir)
+
+    click.echo(
+        f"  [!] {xlsx_file.name} or {csv_file.name} not found in {rn_dir}, skipping"
+    )
+    return None, []
 
 
 def load_eol_json(rn_dir: Path = Path(".")) -> list[dict]:
@@ -221,18 +314,23 @@ def index_release_notes(
     conn = open_write_db(db_path)
     total = 0
     source_counts: dict[str, int] = {}
+    source_files: dict[str, str] = {}
     missing_sources: list[str] = []
     t0 = time.monotonic()
     try:
         for product in RN_PRODUCTS:
             click.echo(f"Loading {product.key}...", nl=False)
-            csv_file = rn_dir / f"rn_{product.key}.csv"
-            if not csv_file.exists():
-                missing_sources.append(str(csv_file))
-            records = load_csv_product(product.key, rn_dir)
+            source_file, records = _product_source(product.key, rn_dir)
+            if source_file is None:
+                missing_sources.append(
+                    f"{rn_dir / f'release-notes-{product.key}.xlsx'} "
+                    f"or {rn_dir / f'rn_{product.key}.csv'}"
+                )
+            else:
+                source_files[product.key] = source_file.name
             source_counts[product.key] = len(records)
-            if fail_on_error and csv_file.exists() and not records:
-                missing_sources.append(str(csv_file))
+            if fail_on_error and source_file is not None and not records:
+                missing_sources.append(str(source_file))
             click.echo(f" {len(records)} entries...", nl=False)
             inserted = insert_records(conn, records)
             click.echo(f" inserted {inserted}")
@@ -266,6 +364,7 @@ def index_release_notes(
     report = IndexReport(
         inserted=total,
         source_counts=source_counts,
+        source_files=source_files,
         missing_sources=missing_sources,
         elapsed_seconds=elapsed,
         db_size_mb=db_path.stat().st_size / 1024 / 1024,
@@ -283,6 +382,7 @@ def index_release_notes(
                 "rn_records_inserted": total,
                 "rn_missing_sources": len(missing_sources),
                 **{f"rn_{key}_records": value for key, value in source_counts.items()},
+                **{f"rn_{key}_source": value for key, value in source_files.items()},
             },
         )
     finally:

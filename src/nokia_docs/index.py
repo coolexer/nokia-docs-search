@@ -25,6 +25,7 @@ import click
 
 from nokia_docs.db import insert_records, open_write_db, record_build_manifest
 from nokia_docs.parse import Chunk, parse_html
+from nokia_docs.products import resolve_product
 
 log = logging.getLogger(__name__)
 
@@ -68,10 +69,14 @@ def _insert_chunks(conn: sqlite3.Connection, chunks: list[Chunk]) -> int:
 # Worker: parse one HTML file → list[Chunk]                                    #
 # --------------------------------------------------------------------------- #
 
-def _parse_worker(args: tuple[Path, Path]) -> ParseResult:
-    html_path, docs_root = args
+def _parse_worker(args: tuple[Path, Path, str | None]) -> ParseResult:
+    html_path, docs_root, product_override = args
     try:
-        return ParseResult(chunks=parse_html(html_path, docs_root))
+        chunks = parse_html(html_path, docs_root)
+        if product_override:
+            for chunk in chunks:
+                chunk.product_line = product_override
+        return ParseResult(chunks=chunks)
     except Exception as exc:
         log.warning("Parse failed for %s: %s", html_path, exc)
         return ParseResult(failed_file=str(html_path), error=str(exc))
@@ -134,15 +139,27 @@ def _writer_thread(conn: sqlite3.Connection, q: queue.Queue, counters: dict) -> 
               help="Delete existing DB and rebuild from scratch")
 @click.option("--workers", default=0, type=int,
               help="Parser worker processes (default: CPU count)")
+@click.option("--product", "product_line", default=None,
+              help="Override the detected product line for every indexed page.")
 @click.option("--fail-on-error", is_flag=True,
               help="Exit with an error if any HTML file fails to parse or write.")
-def index_cmd(docs_root: str, output: str, reset: bool, workers: int, fail_on_error: bool) -> None:
+def index_cmd(
+    docs_root: str,
+    output: str,
+    reset: bool,
+    workers: int,
+    product_line: str | None,
+    fail_on_error: bool,
+) -> None:
     """Build or refresh the Nokia documentation FTS5 index."""
     root = Path(docs_root).resolve()
     db_path = Path(output).resolve()
+    product_override = resolve_product(product_line)
 
     click.echo(f"Docs root : {root}")
     click.echo(f"Database  : {db_path}")
+    if product_override:
+        click.echo(f"Product   : {product_override} (override)")
 
     # Collect HTML files — skip obvious chrome pages.
     _SKIP_NAMES = {
@@ -176,7 +193,7 @@ def index_cmd(docs_root: str, output: str, reset: bool, workers: int, fail_on_er
     parse_failures: list[str] = []
 
     try:
-        args_iter = ((f, root) for f in html_files)
+        args_iter = ((f, root, product_override) for f in html_files)
         pool = None
         if n_workers == 1:
             chunk_iter = (_parse_worker(args) for args in args_iter)

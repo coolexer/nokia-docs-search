@@ -5,6 +5,7 @@ import re
 import sqlite3
 from dataclasses import dataclass, field
 
+from nokia_docs.db import normalize_fts_text
 from nokia_docs.products import PRODUCT_DISPLAY_NAMES, resolve_product
 
 
@@ -94,25 +95,60 @@ def _query_words(query: str) -> list[str]:
     return [w for w in re.split(r"\s+", bare.strip()) if w]
 
 
-def _quote_prefix(term: str) -> str:
-    escaped = term.replace('"', '""')
-    return f'"{escaped}"*'
+_SPELLING = {
+    "signalling": "signaling",
+    "signaling": "signalling",
+}
+
+_SNIPPET_TOKENS = 12
+
+_PRODUCT_HINTS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bsr[\s-]?linux\b|\bsrlinux\b|\bsrl\b", re.IGNORECASE), "srlinux"),
+    (re.compile(r"\b7250\b|\bixr(?:-e2?)?\b", re.IGNORECASE), "ixr"),
+    (re.compile(r"\b7210\b|\bsas\b", re.IGNORECASE), "sas"),
+    (re.compile(r"\b7705\b|\bsar(?:[\s-]?gen2)?\b", re.IGNORECASE), "sar"),
+    (re.compile(r"\b7750\b|\b7450\b|\b7950\b|\bvsr\b|\bsr[\s-]?os\b", re.IGNORECASE), "sros"),
+]
+
+_FAMILY_SLUGS = {
+    "srlinux": ("srlinux-26-7", "srlinux-26-3"),
+    "ixr": ("7250-ixr-26-7", "7250-ixr"),
+    "sas": ("7210-sas",),
+    "sar": ("7705-sar-gen2", "7705-sar"),
+    "sros": ("sros-26-7", "sros-26-3"),
+}
+
+
+def _quote_term(term: str) -> str:
+    escaped = normalize_fts_text(term).replace('"', '""')
+    return f'"{escaped}"'
+
+
+def _term_clause(term: str, *, expand_hyphen: bool) -> str:
+    parts = [_quote_term(term)]
+    twin = _SPELLING.get(term.casefold())
+    if twin:
+        parts.append(_quote_term(twin))
+    if expand_hyphen and "-" in term:
+        bits = [bit for bit in term.split("-") if bit]
+        if len(bits) > 1:
+            parts.append("(" + " AND ".join(_quote_term(bit) for bit in bits) + ")")
+    if len(parts) == 1:
+        return parts[0]
+    return "(" + " OR ".join(parts) + ")"
 
 
 def _and_query(terms: list[str]) -> str:
-    return " AND ".join(_quote_prefix(term) for term in terms)
+    expand = len(terms) > 1
+    return " AND ".join(_term_clause(term, expand_hyphen=expand) for term in terms)
 
 
-def _or_query(terms: list[str]) -> str:
-    return " OR ".join(_quote_prefix(term) for term in terms)
-
-
-def _strict_query(query: str, terms: list[str]) -> str:
+def _strict_query(terms: list[str]) -> str:
     if not terms:
         return ""
     if len(terms) == 1:
-        return _quote_prefix(terms[0])
-    phrase = " ".join(terms).replace('"', '""')
+        return _term_clause(terms[0], expand_hyphen=False)
+    phrase = normalize_fts_text(" ".join(terms)).replace('"', '""')
     return f'"{phrase}" OR ({_and_query(terms)})'
 
 
@@ -173,34 +209,20 @@ def plan_search_queries(query: str) -> list[SearchCandidate]:
     if _is_explicit_fts(query) or '"' in query:
         return [SearchCandidate("strict", query, _query_words(query))]
 
-    terms = _query_words(query)
+    terms = _relaxed_terms(_query_words(query)) or _query_words(query)
     candidates: list[SearchCandidate] = []
-    strict = _strict_query(query, terms)
+    strict = _strict_query(terms)
     if strict:
         candidates.append(SearchCandidate("strict", strict, terms))
 
-    relaxed_terms = _relaxed_terms(terms)
-    if relaxed_terms and relaxed_terms != terms:
-        candidates.append(
-            SearchCandidate(
-                "relaxed",
-                _strict_query(" ".join(relaxed_terms), relaxed_terms),
-                relaxed_terms,
-            )
-        )
-
-    for variant_terms in _variant_term_sets(query, relaxed_terms or terms):
+    for variant_terms in _variant_term_sets(query, terms):
         candidates.append(
             SearchCandidate(
                 "variant",
-                _strict_query(" ".join(variant_terms), variant_terms),
+                _strict_query(variant_terms),
                 variant_terms,
             )
         )
-
-    soft_terms = relaxed_terms or terms
-    if len(soft_terms) > 1:
-        candidates.append(SearchCandidate("soft", _or_query(soft_terms), soft_terms))
 
     unique: list[SearchCandidate] = []
     seen: set[tuple[str, str]] = set()
@@ -215,10 +237,9 @@ def plan_search_queries(query: str) -> list[SearchCandidate]:
 def _sanitize_query(query: str) -> str:
     """Convert natural-language input into an FTS5 query.
 
-    Explicit FTS5 syntax is passed through. For plain multi-word input, use an
-    exact phrase for ranking plus prefix-matched AND terms for recall. Prefix
-    terms are important because the tokenizer keeps "." as part of tokens, so a
-    word at sentence end can be indexed as ``word.``.
+    Explicit FTS5 syntax is passed through. Plain multi-word input becomes an
+    exact phrase plus an AND of the remaining terms, with spelling and hyphen
+    variants inside that one query.
     """
     query = query.strip()
     if not query:
@@ -231,12 +252,38 @@ def _sanitize_query(query: str) -> str:
 _BM25_WEIGHTS = "10.0, 5.0, 3.0, 1.0"
 
 
+def _slug_preference(family: str, query: str) -> tuple[str, ...]:
+    slugs = _FAMILY_SLUGS[family]
+    if family == "sar" and re.search(r"\bgen\s*-?\s*2\b", query, re.IGNORECASE):
+        return ("7705-sar-gen2", "7705-sar")
+    if re.search(r"\b26\.3\b", query):
+        older = [slug for slug in slugs if "26-7" not in slug]
+        newer = [slug for slug in slugs if "26-7" in slug]
+        return tuple(older + newer)
+    return slugs
+
+
+def infer_indexed_product(query: str, conn: sqlite3.Connection) -> str | None:
+    """Pick the newest indexed product slug named by the query, if only one family matches."""
+    families: list[str] = []
+    for pattern, family in _PRODUCT_HINTS:
+        if pattern.search(query) and family not in families:
+            families.append(family)
+    if len(families) != 1:
+        return None
+    indexed = {row[0] for row in conn.execute("SELECT DISTINCT product_line FROM docs")}
+    for slug in _slug_preference(families[0], query):
+        if slug in indexed:
+            return slug
+    return None
+
+
 def _run_fts_search(
     fts_query: str,
     conn: sqlite3.Connection,
     product_line: str | None = None,
     book: str | None = None,
-    top_k: int = 10,
+    top_k: int = 5,
     match_mode: str = "strict",
 ) -> list[Hit]:
     extra_where = ""
@@ -260,7 +307,7 @@ def _run_fts_search(
             d.section_title,
             d.section_path,
             d.rel_path,
-            snippet(docs_fts, 3, '[[', ']]', '...', 32) AS snip,
+            snippet(docs_fts, -1, '[[', ']]', '...', {_SNIPPET_TOKENS}) AS snip,
             bm25(docs_fts, {_BM25_WEIGHTS}) AS score
         FROM docs_fts
         JOIN docs d ON docs_fts.rowid = d.id
@@ -289,33 +336,31 @@ def _run_fts_search(
     ]
 
 
-def _term_present(term: str, text: str) -> bool:
-    normalized_term = term.lower().replace("-", " ")
-    normalized_text = text.lower().replace("-", " ")
-    pattern = rf"(?<![A-Za-z0-9.]){re.escape(normalized_term)}(?![A-Za-z0-9.])"
-    return bool(re.search(pattern, normalized_text))
+def _search_candidate(
+    candidate: SearchCandidate,
+    conn: sqlite3.Connection,
+    *,
+    explicit: str | None,
+    inferred: str | None,
+    book: str | None,
+    top_k: int,
+) -> list[Hit]:
+    product = explicit or inferred
 
+    def run(product_line: str | None) -> list[Hit]:
+        return _run_fts_search(
+            candidate.fts_query,
+            conn,
+            product_line=product_line,
+            book=book,
+            top_k=top_k,
+            match_mode=candidate.match_mode,
+        )
 
-def _soft_match_count(hit: Hit, terms: list[str]) -> int:
-    haystack = " ".join([hit.page_title, hit.section_title, hit.section_path, hit.snippet])
-    return sum(1 for term in terms if _term_present(term, haystack))
-
-
-def _soft_title_path_count(hit: Hit, terms: list[str]) -> int:
-    haystack = " ".join([hit.page_title, hit.section_title, hit.section_path])
-    return sum(1 for term in terms if _term_present(term, haystack))
-
-
-def _rank_soft_hits(hits: list[Hit], terms: list[str]) -> list[Hit]:
-    return sorted(
-        hits,
-        key=lambda hit: (
-            -_soft_match_count(hit, terms),
-            -_soft_title_path_count(hit, terms),
-            -hit.score,
-            hit.doc_id,
-        ),
-    )
+    hits = run(product)
+    if hits or explicit or not inferred:
+        return hits
+    return run(None)
 
 
 def search_docs(
@@ -323,7 +368,7 @@ def search_docs(
     conn: sqlite3.Connection,
     product_line: str | None = None,
     book: str | None = None,
-    top_k: int = 10,
+    top_k: int = 5,
 ) -> list[Hit]:
     """Full-text search across Nokia documentation."""
     top_k = max(1, min(top_k, 50))
@@ -331,19 +376,18 @@ def search_docs(
     if not candidates:
         return []
 
-    enough_hits = min(top_k, 3)
-    fallback_rows: list[Hit] = []
-    seen_doc_ids: set[int] = set()
+    explicit = resolve_product(product_line) if product_line else None
+    inferred = None if product_line else infer_indexed_product(query, conn)
 
     for candidate in candidates:
         try:
-            hits = _run_fts_search(
-                candidate.fts_query,
+            hits = _search_candidate(
+                candidate,
                 conn,
-                product_line=product_line,
+                explicit=explicit,
+                inferred=inferred,
                 book=book,
                 top_k=top_k,
-                match_mode=candidate.match_mode,
             )
         except sqlite3.OperationalError:
             if candidate.match_mode != "strict":
@@ -353,31 +397,17 @@ def search_docs(
                 hits = _run_fts_search(
                     escaped_query,
                     conn,
-                    product_line=product_line,
+                    product_line=explicit,
                     book=book,
                     top_k=top_k,
                     match_mode=candidate.match_mode,
                 )
             except sqlite3.OperationalError:
                 hits = []
-
-        if candidate.match_mode == "soft":
-            hits = _rank_soft_hits(hits, candidate.important_terms)
-        elif candidate.match_mode == "strict" and len(hits) >= enough_hits:
+        if hits:
             return hits[:top_k]
 
-        added_from_candidate = False
-        for hit in hits:
-            if hit.doc_id in seen_doc_ids:
-                continue
-            fallback_rows.append(hit)
-            seen_doc_ids.add(hit.doc_id)
-            added_from_candidate = True
-
-        if added_from_candidate and candidate.match_mode != "strict":
-            return fallback_rows[:top_k]
-
-    return fallback_rows[:top_k]
+    return []
 
 
 def _query_needles(query: str) -> list[str]:
@@ -492,22 +522,38 @@ def get_document(
     return doc
 
 
-def _section_matches_query(section: dict[str, object], query: str) -> bool:
-    terms = [term.casefold() for term in re.findall(r"[A-Za-z0-9_.-]+", query)]
-    if not terms:
-        return True
-    haystack = " ".join(
-        str(section.get(field) or "")
-        for field in ("section_path", "section_title", "heading")
-    ).casefold()
-    return all(term in haystack for term in terms)
+def _page_filter(rel_path: str, query: str | None) -> tuple[str, list]:
+    where = "rel_path = ?"
+    params: list = [rel_path]
+    if query:
+        for term in re.findall(r"[A-Za-z0-9_.-]+", query):
+            needle = term.casefold()
+            where += (
+                " AND (instr(lower(section_title), ?) OR instr(lower(section_path), ?))"
+            )
+            params.extend((needle, needle))
+    return where, params
+
+
+def _page_rows(rows: list) -> list[dict]:
+    return [
+        {
+            "doc_id": r[0],
+            "section_id": r[1],
+            "section_title": r[2],
+            "section_path": r[3],
+            "depth": r[4],
+            "heading": r[2],
+        }
+        for r in rows
+    ]
 
 
 def get_page_sections(
     doc_id: int,
     conn: sqlite3.Connection,
     *,
-    max_sections: int = 200,
+    max_sections: int = 40,
     around_doc_id: bool = True,
     query: str | None = None,
 ) -> dict | None:
@@ -521,41 +567,29 @@ def get_page_sections(
     if not row:
         return None
 
-    sections = [
-        {
-            "doc_id": r[0],
-            "section_id": r[1],
-            "section_title": r[2],
-            "section_path": r[3],
-            "depth": r[4],
-            "heading": r[2],
-        }
-        for r in conn.execute(
-            """SELECT id, section_id, section_title, section_path, depth
-               FROM docs
-               WHERE rel_path = ?
-               ORDER BY id""",
-            (row[4],),
-        ).fetchall()
-    ]
-
-    if query:
-        sections = [
-            section for section in sections if _section_matches_query(section, query)
-        ]
-
-    total_sections = len(sections)
+    where, params = _page_filter(row[4], query)
+    total_sections = conn.execute(
+        f"SELECT COUNT(*) FROM docs WHERE {where}",
+        params,
+    ).fetchone()[0]
     normalized_max = max(0, max_sections)
+    select_sql = f"""SELECT id, section_id, section_title, section_path, depth
+                     FROM docs WHERE {where} ORDER BY id"""
 
-    if normalized_max and total_sections > normalized_max:
-        selected_index = next(
-            (
-                index
-                for index, section in enumerate(sections)
-                if section.get("doc_id") == doc_id
-            ),
-            0,
-        )
+    if not normalized_max or total_sections <= normalized_max:
+        returned_rows = conn.execute(select_sql, params).fetchall()
+        start = 0
+        end = total_sections
+    else:
+        rank = conn.execute(
+            f"""WITH numbered AS (
+                    SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn
+                    FROM docs WHERE {where}
+                )
+                SELECT rn FROM numbered WHERE id = ?""",
+            [*params, doc_id],
+        ).fetchone()
+        selected_index = rank[0] - 1 if rank else 0
         if around_doc_id:
             half_window = normalized_max // 2
             start = max(0, selected_index - half_window)
@@ -564,12 +598,12 @@ def get_page_sections(
         else:
             start = 0
             end = normalized_max
-        returned_sections = sections[start:end]
-    else:
-        start = 0
-        end = total_sections
-        returned_sections = sections
+        returned_rows = conn.execute(
+            select_sql + " LIMIT ? OFFSET ?",
+            [*params, end - start, start],
+        ).fetchall()
 
+    returned_sections = _page_rows(returned_rows)
     return {
         "doc_id": row[0],
         "product_line": row[1],
